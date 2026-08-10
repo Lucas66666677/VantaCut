@@ -1,0 +1,13 @@
+# GPU worker base for COLMAP + a mounted/pinned 3DGS implementation.
+# Keep the research trainer outside this image so its CUDA extensions and license can be pinned per deployment.
+FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04
+
+WORKDIR /app
+ENV DEBIAN_FRONTEND=noninteractive PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+RUN apt-get update && apt-get install -y --no-install-recommends python3 python3-pip ffmpeg colmap libgl1 libglib2.0-0 libsndfile1 git && rm -rf /var/lib/apt/lists/*
+COPY requirements.txt .
+RUN python3 -m pip install --no-cache-dir -r requirements.txt
+COPY . .
+
+# Mount the official Graphdeco repository (with submodules built for this CUDA image) at /opt/gaussian-splatting,
+# then set THREE_DGS_TRAIN_COMMAND / THREE_DGS_RENDER_COMMAND in the deployment environment.

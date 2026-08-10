@@ -1,0 +1,35 @@
+FROM python:3.12-slim-bookworm
+
+WORKDIR /app
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+# Keep the Worker image self-sufficient for FFmpeg, OpenCV-style image handling, and media probing.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        ffmpeg \
+        libsndfile1 \
+        libimage-exiftool-perl \
+        fonts-noto-cjk \
+        tesseract-ocr \
+        tesseract-ocr-eng \
+        tesseract-ocr-chi-tra \
+        libgl1 \
+        libglib2.0-0 \
+        libsm6 \
+        libxext6 \
+        libxrender1 \
+    && ffmpeg -version \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
+
+RUN groupadd --system app && useradd --system --gid app --create-home app
+COPY --chown=app:app . ./
+USER app
+
+CMD ["celery", "-A", "app.worker.celery_app", "worker", "--loglevel=info", "--concurrency=2"]

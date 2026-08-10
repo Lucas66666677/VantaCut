@@ -1,0 +1,20 @@
+# Edge media plane for the AI Live Director. Keep this service horizontally
+# separate from FastAPI: it owns RTMP/WebRTC protocol termination and ICE/UDP.
+logLevel: info
+api: true
+apiAddress: :9997
+
+rtsp: true
+rtspAddress: :8554
+rtmp: true
+rtmpAddress: :1935
+
+# Phones/browser publishers can use WebRTC. In production set public hostnames
+# and expose UDP 8189 plus TURN; do not place this UDP media path behind an HTTP proxy.
+webrtc: true
+webrtcAddress: :8889
+webrtcLocalUDPAddress: :8189
+webrtcAdditionalHosts: []
+
+pathDefaults:
+  source: publisher

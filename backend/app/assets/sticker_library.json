@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "stickers": [
+    {"id": "snowflake_loop", "label": "雪花", "asset_url": "/api/v1/sticker-library/snowflake_loop.webp", "fallback_emoji": "❄️", "tags": ["冰島", "下雪", "雪", "冰川", "iceland", "snow", "glacier"], "emotions": ["sadness", "surprise"]},
+    {"id": "roadtrip_car", "label": "公路旅行", "asset_url": "/api/v1/sticker-library/roadtrip_car.webp", "fallback_emoji": "🚗", "tags": ["公路旅行", "自駕", "開車", "road trip", "driving", "highway"], "emotions": ["joy", "emphasis"]},
+    {"id": "shiver_face", "label": "冷到發抖", "asset_url": "/api/v1/sticker-library/shiver_face.webp", "fallback_emoji": "🥶", "tags": ["好冷", "很冷", "冷死", "凍", "freezing", "so cold", "cold"], "emotions": ["surprise", "sadness"]},
+    {"id": "sparkle_pop", "label": "驚喜亮點", "asset_url": "/api/v1/sticker-library/sparkle_pop.webp", "fallback_emoji": "✨", "tags": ["太棒", "驚喜", "厲害", "wow", "amazing", "beautiful"], "emotions": ["joy", "surprise"]},
+    {"id": "heart_burst", "label": "喜愛", "asset_url": "/api/v1/sticker-library/heart_burst.webp", "fallback_emoji": "💖", "tags": ["喜歡", "愛", "療癒", "love", "cute"], "emotions": ["joy"]},
+    {"id": "alert_burst", "label": "重點提醒", "asset_url": "/api/v1/sticker-library/alert_burst.webp", "fallback_emoji": "💥", "tags": ["注意", "重點", "小心", "important", "warning"], "emotions": ["anger", "emphasis"]}
+  ]
+}

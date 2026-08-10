@@ -1,0 +1,3 @@
+# Install into the GPU worker image/venv after reviewing the upstream model license and checkpoints.
+# pip install -r requirements.sam2.txt
+sam2 @ git+https://github.com/facebookresearch/sam2.git

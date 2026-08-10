@@ -1,0 +1,104 @@
+name: Render quality gate
+
+on:
+  pull_request:
+    paths:
+      - "backend/**"
+      - "frontend/**"
+      - "tests/**"
+      - "docker-compose.yml"
+      - ".github/workflows/render-quality.yml"
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  render-contract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    services:
+      # Mock upstream is explicitly present so any future HTTP provider contract test can target it.
+      # The render run itself has MOCK_AI=true and must make no paid provider call.
+      mock-ai:
+        image: wiremock/wiremock:3.9.1
+        ports: ["8089:8080"]
+    env:
+      ENVIRONMENT: test
+      MOCK_AI: "true"
+      MOCK_AI_HTTP_URL: http://127.0.0.1:8089
+      POSTGRES_DB: video_editor
+      POSTGRES_USER: video_editor
+      POSTGRES_PASSWORD: video_editor_dev
+      NEXT_PUBLIC_API_URL: http://127.0.0.1:8000
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and start test database, Redis, object storage, API, worker, and UI
+        run: docker compose up -d --build postgres redis minio minio-init backend worker frontend
+      - name: Apply database migrations
+        run: docker compose run --rm backend alembic upgrade head
+      - name: Wait for services
+        run: |
+          for url in http://127.0.0.1:8000/health http://127.0.0.1:3000; do
+            for attempt in {1..60}; do curl --fail --silent "$url" && break || sleep 2; done
+            curl --fail --silent "$url"
+          done
+          curl --fail --silent http://127.0.0.1:8089/__admin/mappings
+      - name: Seed a deterministic source, subtitle fixture, and golden render
+        run: |
+          mkdir -p artifacts
+          backend_id="$(docker compose ps -q backend)"
+          docker cp tests/qa/create_render_fixture.py "$backend_id:/tmp/create_render_fixture.py"
+          docker compose exec -T backend env PYTHONPATH=/app python /tmp/create_render_fixture.py --artifacts /tmp/qa --output /tmp/qa/seed.json
+          docker cp "$backend_id:/tmp/qa/ground-truth.mp4" artifacts/ground-truth.mp4
+          docker cp "$backend_id:/tmp/qa/seed.json" artifacts/seed.json
+      - name: Queue the actual FastAPI + Celery render
+        id: render
+        run: |
+          timeline_id="$(jq -r .timeline_id artifacts/seed.json)"
+          user_id="$(jq -r .user_id artifacts/seed.json)"
+          response="$(curl --fail --silent --show-error -X POST "http://127.0.0.1:8000/api/v1/timelines/$timeline_id/render" -H 'content-type: application/json' --data "{\"user_id\":\"$user_id\",\"resolution\":\"1080p\",\"aspect_ratio\":\"16:9\"}")"
+          echo "$response" | jq .
+          echo "render_job_id=$(echo "$response" | jq -r .render_job_id)" >> "$GITHUB_OUTPUT"
+      - name: Wait for render output and create a presigned browser download URL
+        run: |
+          backend_id="$(docker compose ps -q backend)"
+          docker cp tests/qa/wait_for_render.py "$backend_id:/tmp/wait_for_render.py"
+          docker compose exec -T backend env PYTHONPATH=/app python /tmp/wait_for_render.py --render-job-id '${{ steps.render.outputs.render_job_id }}' --output /tmp/qa/render-result.json
+          docker cp "$backend_id:/tmp/qa/render-result.json" artifacts/render-result.json
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm, cache-dependency-path: frontend/package-lock.json }
+      - name: Install Playwright and execute browser download assertion
+        working-directory: frontend
+        env:
+          PLAYWRIGHT_BASE_URL: http://127.0.0.1:3000
+          RENDER_DOWNLOAD_PATH: ${{ github.workspace }}/artifacts/rendered-from-browser.mp4
+        run: |
+          export RENDER_DOWNLOAD_URL="$(jq -r .download_url ../artifacts/render-result.json)"
+          npm ci
+          npx playwright install --with-deps chromium
+          npm run test:e2e
+      - name: Compare visual quality, subtitle region, color metadata, and A/V marker sync
+        run: |
+          backend_id="$(docker compose ps -q backend)"
+          docker cp tests/media_quality/video_quality_gate.py "$backend_id:/tmp/video_quality_gate.py"
+          docker cp artifacts/ground-truth.mp4 "$backend_id:/tmp/qa/ground-truth.mp4"
+          docker cp artifacts/rendered-from-browser.mp4 "$backend_id:/tmp/qa/rendered.mp4"
+          docker compose exec -T backend python /tmp/video_quality_gate.py --expected /tmp/qa/ground-truth.mp4 --actual /tmp/qa/rendered.mp4 --critical-times 0.35,1.0,1.55,2.05 --report /tmp/qa/quality-report.json --max-av-delay-ms 50
+          docker cp "$backend_id:/tmp/qa/quality-report.json" artifacts/quality-report.json
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: render-quality-${{ github.run_id }}
+          path: |
+            artifacts/
+            frontend/playwright-report/
+            frontend/test-results/
+      - name: Collect container logs on failure
+        if: failure()
+        run: docker compose logs --no-color > artifacts/docker-compose.log
+      - name: Tear down integration stack
+        if: always()
+        run: docker compose down -v

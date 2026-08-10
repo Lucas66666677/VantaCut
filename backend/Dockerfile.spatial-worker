@@ -1,0 +1,30 @@
+# Build a dedicated GPU worker with an FFmpeg revision that exposes NVENC MV-HEVC.
+# Pin FFMPEG_REF in production to a commit that passed the capability/Apple-device test matrix.
+FROM nvidia/cuda:12.4.1-devel-debian12 AS ffmpeg-build
+ARG FFMPEG_REF=master
+ARG NV_CODEC_HEADERS_REF=master
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential ca-certificates git nasm pkg-config yasm \
+    libass-dev libfreetype6-dev libfontconfig1-dev libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+RUN git clone --depth 1 --branch ${NV_CODEC_HEADERS_REF} https://github.com/FFmpeg/nv-codec-headers.git /tmp/nv-codec-headers \
+    && make -C /tmp/nv-codec-headers install \
+    && git clone --depth 1 --branch ${FFMPEG_REF} https://github.com/FFmpeg/FFmpeg.git /tmp/ffmpeg \
+    && cd /tmp/ffmpeg \
+    && ./configure --prefix=/opt/spatial-ffmpeg --enable-gpl --enable-nonfree --enable-nvenc --enable-cuda-nvcc --enable-libass \
+    && make -j"$(nproc)" \
+    && make install \
+    && /opt/spatial-ffmpeg/bin/ffmpeg -hide_banner -encoders | grep -q hevc_nvenc
+
+FROM nvidia/cuda:12.4.1-runtime-debian12
+WORKDIR /app
+ENV DEBIAN_FRONTEND=noninteractive PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1 \
+    SPATIAL_FFMPEG_PATH=/opt/spatial-ffmpeg/bin/ffmpeg SPATIAL_FFPROBE_PATH=/opt/spatial-ffmpeg/bin/ffprobe
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 python3-pip ca-certificates libgl1 libglib2.0-0 libsm6 libxext6 libxrender1 libsndfile1 \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=ffmpeg-build /opt/spatial-ffmpeg /opt/spatial-ffmpeg
+COPY requirements.txt ./
+RUN pip3 install --break-system-packages -r requirements.txt
+COPY . ./
+CMD ["celery", "-A", "app.worker.celery_app", "worker", "--loglevel=info", "--queues=spatial", "--concurrency=1"]

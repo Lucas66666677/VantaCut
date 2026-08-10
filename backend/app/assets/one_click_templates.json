@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "templates": [
+    {
+      "id": "punchy-vlog-15s",
+      "name": "節奏 Vlog・15 秒",
+      "aspect_ratio": "9:16",
+      "bgm": {
+        "source": "user_supplied",
+        "target_bpm": 128,
+        "search_keywords": ["upbeat electronic vlog", "punchy future bass"],
+        "mix_level": 0.18
+      },
+      "slots": [
+        {"id": "hook", "beats": 2, "transition_after": "zoom_blur"},
+        {"id": "moment-1", "beats": 4, "transition_after": "crossfade"},
+        {"id": "moment-2", "beats": 4, "transition_after": "rgb_split"},
+        {"id": "moment-3", "beats": 4, "transition_after": "crossfade"},
+        {"id": "outro", "beats": 2}
+      ]
+    },
+    {
+      "id": "cinematic-story-30s",
+      "name": "電影敘事・30 秒",
+      "aspect_ratio": "16:9",
+      "bgm": {
+        "source": "user_supplied",
+        "target_bpm": 96,
+        "search_keywords": ["cinematic ambient build", "emotional documentary"],
+        "mix_level": 0.14
+      },
+      "slots": [
+        {"id": "establish", "beats": 4, "transition_after": "crossfade"},
+        {"id": "detail-1", "beats": 8, "transition_after": "crossfade"},
+        {"id": "detail-2", "beats": 8, "transition_after": "zoom_blur"},
+        {"id": "payoff", "beats": 8, "transition_after": "crossfade"},
+        {"id": "end-card", "beats": 4}
+      ]
+    }
+  ]
+}

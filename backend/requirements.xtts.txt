@@ -1,0 +1,2 @@
+# Install only on the isolated GPU voice worker. Keep this out of the API image.
+coqui-tts>=0.27,<0.29

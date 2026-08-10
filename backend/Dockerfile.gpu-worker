@@ -1,0 +1,19 @@
+FROM nvidia/cuda:12.4.1-runtime-debian12
+
+WORKDIR /app
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+# NVENC is exposed by the host NVIDIA driver through NVIDIA Container Toolkit.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends python3 python3-pip ffmpeg fonts-noto-cjk tesseract-ocr tesseract-ocr-eng tesseract-ocr-chi-tra ca-certificates \
+        libgl1 libglib2.0-0 libsm6 libxext6 libxrender1 libsndfile1 libimage-exiftool-perl \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt ./
+RUN pip3 install --break-system-packages -r requirements.txt
+COPY . ./
+
+CMD ["celery", "-A", "app.worker.celery_app", "worker", "--loglevel=info", "--queues=render", "--concurrency=1"]

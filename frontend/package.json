@@ -1,0 +1,39 @@
+{
+  "name": "ai-video-editor-frontend",
+  "private": true,
+  "scripts": {
+    "prepare:ort": "node scripts/copy-ort-assets.mjs",
+    "prepare:ffmpeg": "node scripts/copy-ffmpeg-assets.mjs",
+    "prepare:assets": "npm run prepare:ort && npm run prepare:ffmpeg",
+    "dev": "npm run prepare:assets && next dev",
+    "build": "npm run prepare:assets && next build",
+    "start": "next start",
+    "test:e2e": "playwright test",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "@ffmpeg/core": "^0.12.10",
+    "@ffmpeg/ffmpeg": "^0.12.10",
+    "@ffmpeg/util": "^0.12.2",
+    "@mkkellogg/gaussian-splats-3d": "^0.4.7",
+    "framer-motion": "^12.42.2",
+    "next": "15.1.3",
+    "onnxruntime-web": "^1.27.0",
+    "react": "19.0.0",
+    "react-dom": "19.0.0",
+    "three": "^0.185.1",
+    "yjs": "^13.6.27",
+    "zustand": "^5.0.3"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.52.0",
+    "@types/node": "^22.10.5",
+    "@types/react": "^19.0.3",
+    "@types/react-dom": "^19.0.2",
+    "@types/three": "^0.185.0",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.4.49",
+    "tailwindcss": "^3.4.17",
+    "typescript": "^5.7.2"
+  }
+}

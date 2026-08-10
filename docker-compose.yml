@@ -1,0 +1,388 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-video_editor}
+      POSTGRES_USER: ${POSTGRES_USER:-video_editor}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-video_editor_dev}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/001-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin123}
+    ports:
+      - "${MINIO_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - minio_data:/data
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin123}
+      MINIO_BUCKET: ${MINIO_BUCKET:-media}
+    entrypoint: /bin/sh
+    command: -c "mc alias set local http://minio:9000 $$MINIO_ROOT_USER $$MINIO_ROOT_PASSWORD && mc mb --ignore-existing local/$$MINIO_BUCKET"
+
+  # The media plane accepts OBS RTMP and mobile WebRTC, then exposes an internal
+  # RTSP subscription for the aiortc director. It should be a separate deployment
+  # with public UDP/TURN configuration in production.
+  mediamtx:
+    image: bluenviron/mediamtx:1.19.2
+    restart: unless-stopped
+    ports:
+      - "${LIVE_RTMP_PORT:-1935}:1935"
+      - "${LIVE_RTSP_PORT:-8554}:8554"
+      - "${LIVE_WEBRTC_PORT:-8889}:8889"
+      - "${LIVE_WEBRTC_UDP_PORT:-8189}:8189/udp"
+    volumes:
+      - ./infra/mediamtx/mediamtx.yml:/mediamtx.yml:ro
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+psycopg://video_editor:video_editor_dev@postgres:5432/video_editor
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      S3_ENDPOINT_URL: http://minio:9000
+      S3_PUBLIC_ENDPOINT_URL: http://localhost:9000
+      S3_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
+      S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin123}
+      S3_BUCKET: ${MINIO_BUCKET:-media}
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      MOCK_AI: ${MOCK_AI:-true}
+      MOCK_AI_DELAY_SECONDS: ${MOCK_AI_DELAY_SECONDS:-0.35}
+      AI_VISION_PROVIDER: ${AI_VISION_PROVIDER:-gemini}
+      AI_ASR_PROVIDER: ${AI_ASR_PROVIDER:-openai_whisper}
+      AI_TEXT_PROVIDER: ${AI_TEXT_PROVIDER:-gemini}
+      AI_DIRECTOR_PROVIDER: ${AI_DIRECTOR_PROVIDER:-openai}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      GEMINI_VISION_MODEL: ${GEMINI_VISION_MODEL:-gemini-video-model}
+      OPENAI_VISION_MODEL: ${OPENAI_VISION_MODEL:-gpt-4o}
+      OPENAI_ASR_MODEL: ${OPENAI_ASR_MODEL:-whisper-1}
+      GEMINI_TEXT_MODEL: ${GEMINI_TEXT_MODEL:-gemini-video-model}
+      OPENAI_TEXT_MODEL: ${OPENAI_TEXT_MODEL:-gpt-4o}
+      OPENAI_DIRECTOR_MODEL: ${OPENAI_DIRECTOR_MODEL:-gpt-4o}
+      TTS_COMMAND: ${TTS_COMMAND:-}
+      KINETIC_SUBTITLE_WEBM: ${KINETIC_SUBTITLE_WEBM:-false}
+      GAZE_REDIRECTION_ONNX_PATH: ${GAZE_REDIRECTION_ONNX_PATH:-}
+      VIDEO_INPAINTING_PROVIDER: ${VIDEO_INPAINTING_PROVIDER:-propainter}
+      PROPAINTER_COMMAND: ${PROPAINTER_COMMAND:-}
+      CELERY_INPAINTING_QUEUE: ${CELERY_INPAINTING_QUEUE:-celery}
+      AUDIO_GENERATION_COMMAND: ${AUDIO_GENERATION_COMMAND:-}
+      DOLBY_ATMOS_ENCODER_COMMAND: ${DOLBY_ATMOS_ENCODER_COMMAND:-}
+      SOCIAL_OAUTH_REDIRECT_BASE_URL: ${SOCIAL_OAUTH_REDIRECT_BASE_URL:-http://localhost:8000}
+      SOCIAL_TOKEN_ENCRYPTION_KEY: ${SOCIAL_TOKEN_ENCRYPTION_KEY:-}
+      YOUTUBE_CLIENT_ID: ${YOUTUBE_CLIENT_ID:-}
+      YOUTUBE_CLIENT_SECRET: ${YOUTUBE_CLIENT_SECRET:-}
+      TIKTOK_CLIENT_KEY: ${TIKTOK_CLIENT_KEY:-}
+      TIKTOK_CLIENT_SECRET: ${TIKTOK_CLIENT_SECRET:-}
+      THUMBNAIL_GENERATION_COMMAND: ${THUMBNAIL_GENERATION_COMMAND:-}
+      SCREEN_FOCUS_OCR_LANG: ${SCREEN_FOCUS_OCR_LANG:-eng}
+      SCREEN_FOCUS_CURSOR_TEMPLATES: ${SCREEN_FOCUS_CURSOR_TEMPLATES:-}
+      DEPTH_ANYTHING_ONNX_PATH: ${DEPTH_ANYTHING_ONNX_PATH:-}
+      SAM2_CHECKPOINT_PATH: ${SAM2_CHECKPOINT_PATH:-}
+      SAM2_CONFIG_PATH: ${SAM2_CONFIG_PATH:-configs/sam2.1/sam2.1_hiera_l.yaml}
+      MATTING_FRAME_STRIDE: ${MATTING_FRAME_STRIDE:-1}
+      LOTTIE_RENDER_COMMAND: ${LOTTIE_RENDER_COMMAND:-}
+      AI_VOICE_PROVIDER: ${AI_VOICE_PROVIDER:-xtts_v2}
+      VOICE_PROFILE_ENCRYPTION_KEY: ${VOICE_PROFILE_ENCRYPTION_KEY:-}
+      XTTS_MODEL_DIR: ${XTTS_MODEL_DIR:-}
+      XTTS_CONFIG_PATH: ${XTTS_CONFIG_PATH:-}
+      XTTS_DEVICE: ${XTTS_DEVICE:-cuda}
+      XTTS_USE_DEEPSPEED: ${XTTS_USE_DEEPSPEED:-false}
+      COLMAP_COMMAND: ${COLMAP_COMMAND:-colmap}
+      THREE_DGS_TRAIN_COMMAND: ${THREE_DGS_TRAIN_COMMAND:-}
+      THREE_DGS_RENDER_COMMAND: ${THREE_DGS_RENDER_COMMAND:-}
+      SPATIAL_TRAINING_TIMEOUT_SECONDS: ${SPATIAL_TRAINING_TIMEOUT_SECONDS:-28800}
+      SPATIAL_RENDER_TIMEOUT_SECONDS: ${SPATIAL_RENDER_TIMEOUT_SECONDS:-7200}
+      LIVE_MEDIAMTX_INTERNAL_RTSP_BASE_URL: ${LIVE_MEDIAMTX_INTERNAL_RTSP_BASE_URL:-rtsp://mediamtx:8554}
+      LIVE_MEDIAMTX_PUBLIC_RTMP_BASE_URL: ${LIVE_MEDIAMTX_PUBLIC_RTMP_BASE_URL:-rtmp://localhost:1935}
+      LIVE_VAD_THRESHOLD: ${LIVE_VAD_THRESHOLD:-0.62}
+      LIVE_MIN_SWITCH_SECONDS: ${LIVE_MIN_SWITCH_SECONDS:-0.8}
+      LIVE_VIDEO_CODEC: ${LIVE_VIDEO_CODEC:-libx264}
+      LIVE_CAPTIONS_ENABLED: ${LIVE_CAPTIONS_ENABLED:-true}
+      LIVE_CAPTION_WINDOW_SECONDS: ${LIVE_CAPTION_WINDOW_SECONDS:-2.0}
+      LIVE_CAPTION_TTL_SECONDS: ${LIVE_CAPTION_TTL_SECONDS:-2.8}
+      SILERO_VAD_TORCHSCRIPT_PATH: ${SILERO_VAD_TORCHSCRIPT_PATH:-}
+      FORENSIC_WATERMARK_ENABLED: ${FORENSIC_WATERMARK_ENABLED:-false}
+      WATERMARK_ENCRYPTION_KEY: ${WATERMARK_ENCRYPTION_KEY:-}
+      WATERMARK_FRAME_STRIDE: ${WATERMARK_FRAME_STRIDE:-15}
+      WATERMARK_DCT_STRENGTH: ${WATERMARK_DCT_STRENGTH:-18}
+      WATERMARK_MIN_COPIES: ${WATERMARK_MIN_COPIES:-3}
+      WATERMARK_MAX_COPIES: ${WATERMARK_MAX_COPIES:-7}
+      C2PA_ENABLED: ${C2PA_ENABLED:-false}
+      C2PATOOL_COMMAND: ${C2PATOOL_COMMAND:-}
+      C2PA_SIGNER_PATH: ${C2PA_SIGNER_PATH:-}
+      C2PA_CLAIM_GENERATOR: ${C2PA_CLAIM_GENERATOR:-AI Video Editor/1.0}
+      C2PA_TIMEOUT_SECONDS: ${C2PA_TIMEOUT_SECONDS:-300}
+      PLATFORM_API_KEY_PEPPER: ${PLATFORM_API_KEY_PEPPER:-}
+      PLATFORM_WEBHOOK_ENCRYPTION_KEY: ${PLATFORM_WEBHOOK_ENCRYPTION_KEY:-}
+      PLATFORM_REDIS_KEY_PREFIX: ${PLATFORM_REDIS_KEY_PREFIX:-platform:rate}
+      PLATFORM_MAX_SOURCE_BYTES: ${PLATFORM_MAX_SOURCE_BYTES:-5368709120}
+      PLATFORM_ALLOW_PRIVATE_SOURCE_URLS: ${PLATFORM_ALLOW_PRIVATE_SOURCE_URLS:-false}
+      PLATFORM_WEBHOOK_TIMEOUT_SECONDS: ${PLATFORM_WEBHOOK_TIMEOUT_SECONDS:-15}
+      PLATFORM_MANAGEMENT_TOKEN: ${PLATFORM_MANAGEMENT_TOKEN:-}
+      INGEST_DEVICE_ENCRYPTION_KEY: ${INGEST_DEVICE_ENCRYPTION_KEY:-}
+      INGEST_MANAGEMENT_TOKEN: ${INGEST_MANAGEMENT_TOKEN:-}
+      INGEST_REQUIRE_TLS: ${INGEST_REQUIRE_TLS:-true}
+      INGEST_MAX_CHUNK_BYTES: ${INGEST_MAX_CHUNK_BYTES:-2147483648}
+      INGEST_SIGNATURE_MAX_AGE_SECONDS: ${INGEST_SIGNATURE_MAX_AGE_SECONDS:-300}
+      INGEST_REPLAY_TTL_SECONDS: ${INGEST_REPLAY_TTL_SECONDS:-900}
+      RETENTION_MODEL_PATH: ${RETENTION_MODEL_PATH:-}
+      RETENTION_WINDOW_SECONDS: ${RETENTION_WINDOW_SECONDS:-1.0}
+      SPATIAL_FFMPEG_PATH: ${SPATIAL_FFMPEG_PATH:-ffmpeg}
+      SPATIAL_FFPROBE_PATH: ${SPATIAL_FFPROBE_PATH:-ffprobe}
+      SPATIAL_METADATA_WRITER_COMMAND: ${SPATIAL_METADATA_WRITER_COMMAND:-}
+      SPATIAL_METADATA_VERIFIER_COMMAND: ${SPATIAL_METADATA_VERIFIER_COMMAND:-}
+      SPATIAL_MVHEVC_TIMEOUT_SECONDS: ${SPATIAL_MVHEVC_TIMEOUT_SECONDS:-14400}
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    volumes:
+      - ./backend:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+      mediamtx:
+        condition: service_started
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+psycopg://video_editor:video_editor_dev@postgres:5432/video_editor
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      S3_ENDPOINT_URL: http://minio:9000
+      S3_PUBLIC_ENDPOINT_URL: http://localhost:9000
+      S3_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
+      S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin123}
+      S3_BUCKET: ${MINIO_BUCKET:-media}
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      MOCK_AI: ${MOCK_AI:-true}
+      MOCK_AI_DELAY_SECONDS: ${MOCK_AI_DELAY_SECONDS:-0.35}
+      AI_VISION_PROVIDER: ${AI_VISION_PROVIDER:-gemini}
+      AI_ASR_PROVIDER: ${AI_ASR_PROVIDER:-openai_whisper}
+      AI_TEXT_PROVIDER: ${AI_TEXT_PROVIDER:-gemini}
+      AI_DIRECTOR_PROVIDER: ${AI_DIRECTOR_PROVIDER:-openai}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      GEMINI_VISION_MODEL: ${GEMINI_VISION_MODEL:-gemini-video-model}
+      OPENAI_VISION_MODEL: ${OPENAI_VISION_MODEL:-gpt-4o}
+      OPENAI_ASR_MODEL: ${OPENAI_ASR_MODEL:-whisper-1}
+      GEMINI_TEXT_MODEL: ${GEMINI_TEXT_MODEL:-gemini-video-model}
+      OPENAI_TEXT_MODEL: ${OPENAI_TEXT_MODEL:-gpt-4o}
+      OPENAI_DIRECTOR_MODEL: ${OPENAI_DIRECTOR_MODEL:-gpt-4o}
+      TTS_COMMAND: ${TTS_COMMAND:-}
+      KINETIC_SUBTITLE_WEBM: ${KINETIC_SUBTITLE_WEBM:-false}
+      GAZE_REDIRECTION_ONNX_PATH: ${GAZE_REDIRECTION_ONNX_PATH:-}
+      VIDEO_INPAINTING_PROVIDER: ${VIDEO_INPAINTING_PROVIDER:-propainter}
+      PROPAINTER_COMMAND: ${PROPAINTER_COMMAND:-}
+      CELERY_INPAINTING_QUEUE: ${CELERY_INPAINTING_QUEUE:-celery}
+      AUDIO_GENERATION_COMMAND: ${AUDIO_GENERATION_COMMAND:-}
+      DOLBY_ATMOS_ENCODER_COMMAND: ${DOLBY_ATMOS_ENCODER_COMMAND:-}
+      SOCIAL_OAUTH_REDIRECT_BASE_URL: ${SOCIAL_OAUTH_REDIRECT_BASE_URL:-http://localhost:8000}
+      SOCIAL_TOKEN_ENCRYPTION_KEY: ${SOCIAL_TOKEN_ENCRYPTION_KEY:-}
+      YOUTUBE_CLIENT_ID: ${YOUTUBE_CLIENT_ID:-}
+      YOUTUBE_CLIENT_SECRET: ${YOUTUBE_CLIENT_SECRET:-}
+      TIKTOK_CLIENT_KEY: ${TIKTOK_CLIENT_KEY:-}
+      TIKTOK_CLIENT_SECRET: ${TIKTOK_CLIENT_SECRET:-}
+      THUMBNAIL_GENERATION_COMMAND: ${THUMBNAIL_GENERATION_COMMAND:-}
+      SCREEN_FOCUS_OCR_LANG: ${SCREEN_FOCUS_OCR_LANG:-eng}
+      SCREEN_FOCUS_CURSOR_TEMPLATES: ${SCREEN_FOCUS_CURSOR_TEMPLATES:-}
+      DEPTH_ANYTHING_ONNX_PATH: ${DEPTH_ANYTHING_ONNX_PATH:-}
+      SAM2_CHECKPOINT_PATH: ${SAM2_CHECKPOINT_PATH:-}
+      SAM2_CONFIG_PATH: ${SAM2_CONFIG_PATH:-configs/sam2.1/sam2.1_hiera_l.yaml}
+      MATTING_FRAME_STRIDE: ${MATTING_FRAME_STRIDE:-1}
+      LOTTIE_RENDER_COMMAND: ${LOTTIE_RENDER_COMMAND:-}
+      AI_VOICE_PROVIDER: ${AI_VOICE_PROVIDER:-xtts_v2}
+      VOICE_PROFILE_ENCRYPTION_KEY: ${VOICE_PROFILE_ENCRYPTION_KEY:-}
+      XTTS_MODEL_DIR: ${XTTS_MODEL_DIR:-}
+      XTTS_CONFIG_PATH: ${XTTS_CONFIG_PATH:-}
+      XTTS_DEVICE: ${XTTS_DEVICE:-cuda}
+      XTTS_USE_DEEPSPEED: ${XTTS_USE_DEEPSPEED:-false}
+      COLMAP_COMMAND: ${COLMAP_COMMAND:-colmap}
+      THREE_DGS_TRAIN_COMMAND: ${THREE_DGS_TRAIN_COMMAND:-}
+      THREE_DGS_RENDER_COMMAND: ${THREE_DGS_RENDER_COMMAND:-}
+      SPATIAL_TRAINING_TIMEOUT_SECONDS: ${SPATIAL_TRAINING_TIMEOUT_SECONDS:-28800}
+      SPATIAL_RENDER_TIMEOUT_SECONDS: ${SPATIAL_RENDER_TIMEOUT_SECONDS:-7200}
+      FORENSIC_WATERMARK_ENABLED: ${FORENSIC_WATERMARK_ENABLED:-false}
+      WATERMARK_ENCRYPTION_KEY: ${WATERMARK_ENCRYPTION_KEY:-}
+      WATERMARK_FRAME_STRIDE: ${WATERMARK_FRAME_STRIDE:-15}
+      WATERMARK_DCT_STRENGTH: ${WATERMARK_DCT_STRENGTH:-18}
+      WATERMARK_MIN_COPIES: ${WATERMARK_MIN_COPIES:-3}
+      WATERMARK_MAX_COPIES: ${WATERMARK_MAX_COPIES:-7}
+      C2PA_ENABLED: ${C2PA_ENABLED:-false}
+      C2PATOOL_COMMAND: ${C2PATOOL_COMMAND:-}
+      C2PA_SIGNER_PATH: ${C2PA_SIGNER_PATH:-}
+      C2PA_CLAIM_GENERATOR: ${C2PA_CLAIM_GENERATOR:-AI Video Editor/1.0}
+      C2PA_TIMEOUT_SECONDS: ${C2PA_TIMEOUT_SECONDS:-300}
+      PLATFORM_API_KEY_PEPPER: ${PLATFORM_API_KEY_PEPPER:-}
+      PLATFORM_WEBHOOK_ENCRYPTION_KEY: ${PLATFORM_WEBHOOK_ENCRYPTION_KEY:-}
+      PLATFORM_REDIS_KEY_PREFIX: ${PLATFORM_REDIS_KEY_PREFIX:-platform:rate}
+      PLATFORM_MAX_SOURCE_BYTES: ${PLATFORM_MAX_SOURCE_BYTES:-5368709120}
+      PLATFORM_ALLOW_PRIVATE_SOURCE_URLS: ${PLATFORM_ALLOW_PRIVATE_SOURCE_URLS:-false}
+      PLATFORM_WEBHOOK_TIMEOUT_SECONDS: ${PLATFORM_WEBHOOK_TIMEOUT_SECONDS:-15}
+      PLATFORM_MANAGEMENT_TOKEN: ${PLATFORM_MANAGEMENT_TOKEN:-}
+      INGEST_DEVICE_ENCRYPTION_KEY: ${INGEST_DEVICE_ENCRYPTION_KEY:-}
+      INGEST_MANAGEMENT_TOKEN: ${INGEST_MANAGEMENT_TOKEN:-}
+      INGEST_REQUIRE_TLS: ${INGEST_REQUIRE_TLS:-true}
+      INGEST_MAX_CHUNK_BYTES: ${INGEST_MAX_CHUNK_BYTES:-2147483648}
+      INGEST_SIGNATURE_MAX_AGE_SECONDS: ${INGEST_SIGNATURE_MAX_AGE_SECONDS:-300}
+      INGEST_REPLAY_TTL_SECONDS: ${INGEST_REPLAY_TTL_SECONDS:-900}
+      RETENTION_MODEL_PATH: ${RETENTION_MODEL_PATH:-}
+      RETENTION_WINDOW_SECONDS: ${RETENTION_WINDOW_SECONDS:-1.0}
+      SPATIAL_FFMPEG_PATH: ${SPATIAL_FFMPEG_PATH:-ffmpeg}
+      SPATIAL_FFPROBE_PATH: ${SPATIAL_FFPROBE_PATH:-ffprobe}
+      SPATIAL_METADATA_WRITER_COMMAND: ${SPATIAL_METADATA_WRITER_COMMAND:-}
+      SPATIAL_METADATA_VERIFIER_COMMAND: ${SPATIAL_METADATA_VERIFIER_COMMAND:-}
+      SPATIAL_MVHEVC_TIMEOUT_SECONDS: ${SPATIAL_MVHEVC_TIMEOUT_SECONDS:-14400}
+    volumes:
+      - ./backend:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    command: celery -A app.worker.celery_app worker --loglevel=info
+
+  # Opt-in: needs NVIDIA Container Toolkit plus a tested MV-HEVC-capable driver.
+  # Apple spatial metadata writing/verification is intentionally supplied by a macOS bridge command.
+  spatial-worker:
+    profiles: ["spatial"]
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.spatial-worker
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+psycopg://video_editor:video_editor_dev@postgres:5432/video_editor
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      S3_ENDPOINT_URL: http://minio:9000
+      S3_PUBLIC_ENDPOINT_URL: http://localhost:9000
+      S3_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
+      S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin123}
+      S3_BUCKET: ${MINIO_BUCKET:-media}
+      DEPTH_ANYTHING_ONNX_PATH: ${DEPTH_ANYTHING_ONNX_PATH:-}
+      SPATIAL_FFMPEG_PATH: /opt/spatial-ffmpeg/bin/ffmpeg
+      SPATIAL_FFPROBE_PATH: /opt/spatial-ffmpeg/bin/ffprobe
+      SPATIAL_METADATA_WRITER_COMMAND: ${SPATIAL_METADATA_WRITER_COMMAND:-}
+      SPATIAL_METADATA_VERIFIER_COMMAND: ${SPATIAL_METADATA_VERIFIER_COMMAND:-}
+      SPATIAL_MVHEVC_TIMEOUT_SECONDS: ${SPATIAL_MVHEVC_TIMEOUT_SECONDS:-14400}
+      CELERY_SPATIAL_QUEUE: ${CELERY_SPATIAL_QUEUE:-spatial}
+    gpus: all
+    volumes:
+      - ./backend:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    command: celery -A app.worker.celery_app worker --loglevel=info --queues=spatial --concurrency=1
+
+  scheduler:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      DATABASE_URL: postgresql+psycopg://video_editor:video_editor_dev@postgres:5432/video_editor
+      REDIS_URL: redis://redis:6379/0
+      S3_ENDPOINT_URL: http://minio:9000
+      S3_PUBLIC_ENDPOINT_URL: http://localhost:9000
+      S3_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
+      S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin123}
+      S3_BUCKET: ${MINIO_BUCKET:-media}
+      SOCIAL_TOKEN_ENCRYPTION_KEY: ${SOCIAL_TOKEN_ENCRYPTION_KEY:-}
+      YOUTUBE_CLIENT_ID: ${YOUTUBE_CLIENT_ID:-}
+      YOUTUBE_CLIENT_SECRET: ${YOUTUBE_CLIENT_SECRET:-}
+      THUMBNAIL_GENERATION_COMMAND: ${THUMBNAIL_GENERATION_COMMAND:-}
+    volumes:
+      - ./backend:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    command: celery -A app.worker.celery_app beat --loglevel=info
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
+    volumes:
+      - ./frontend:/app
+      - frontend_node_modules:/app/node_modules
+      - frontend_next:/app/.next
+    command: npm run dev -- --hostname 0.0.0.0
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:
+  frontend_node_modules:
+  frontend_next:
