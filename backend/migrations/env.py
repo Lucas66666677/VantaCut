@@ -20,7 +20,17 @@ target_metadata = Base.metadata
 
 def run_migrations_offline() -> None:
     url = config.get_main_option("sqlalchemy.url")
-    context.configure(url=url, target_metadata=target_metadata, literal_binds=True)
+    context.configure(
+        url=url,
+        target_metadata=target_metadata,
+        literal_binds=True,
+        # This repo's revision ids are descriptive slugs (e.g.
+        # "0009_add_gaming_highlight_analysis_type", 39 chars), not short
+        # hashes, so Alembic's default 32-char alembic_version.version_num
+        # column is too narrow. See run_migrations_online() for the matching
+        # online-mode setting.
+        version_table_column_size=64,
+    )
     with context.begin_transaction():
         context.run_migrations()
 
@@ -32,7 +42,11 @@ def run_migrations_online() -> None:
         poolclass=pool.NullPool,
     )
     with connectable.connect() as connection:
-        context.configure(connection=connection, target_metadata=target_metadata)
+        context.configure(
+            connection=connection,
+            target_metadata=target_metadata,
+            version_table_column_size=64,
+        )
         with context.begin_transaction():
             context.run_migrations()
 
