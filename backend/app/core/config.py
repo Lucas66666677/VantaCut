@@ -198,6 +198,10 @@ class Settings:
     # Licensed/contracted Yahoo-compatible endpoint only; no browser key exposure or undocumented scraping.
     finance_yahoo_compatible_base_url: str | None = os.getenv("FINANCE_YAHOO_COMPATIBLE_BASE_URL")
     finance_yahoo_compatible_api_key: str | None = os.getenv("FINANCE_YAHOO_COMPATIBLE_API_KEY")
+    # User session auth (see app/core/security.py, app/auth/). Must be a real
+    # high-entropy secret in any non-development environment; never a default.
+    jwt_secret_key: str = os.getenv("JWT_SECRET_KEY", "")
+    jwt_expire_minutes: int = int(os.getenv("JWT_EXPIRE_MINUTES", "60"))
 
     @property
     def use_mock_ai(self) -> bool:
@@ -205,3 +209,6 @@ class Settings:
 
 
 settings = Settings()
+
+if settings.environment not in {"development", "test"} and not settings.jwt_secret_key:
+    raise RuntimeError("JWT_SECRET_KEY must be set outside development/test environments.")
