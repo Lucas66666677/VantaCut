@@ -444,7 +444,7 @@ class InteractivePlaybackSession(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     total_watch_seconds: Mapped[float] = mapped_column(Numeric(14, 3), default=0)
 
-    timeline: Mapped[Timeline] = relationship(back_populates="interactive_sessions")
+    timeline: Mapped["Timeline"] = relationship(back_populates="interactive_sessions")
     events: Mapped[list["InteractivePlaybackEvent"]] = relationship(
         back_populates="session", cascade="all, delete-orphan", order_by="InteractivePlaybackEvent.created_at"
     )
