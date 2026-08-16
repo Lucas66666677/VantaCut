@@ -167,6 +167,11 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     render_credits: Mapped[int] = mapped_column(Integer, default=10, nullable=False)
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    # Nullable: existing/seeded rows created before auth landed have no password
+    # and are therefore not login-able (see app.core.security.verify_password,
+    # which treats an empty/missing hash as a verification failure).
+    hashed_password: Mapped[str | None] = mapped_column(String(255))
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     projects: Mapped[list["Project"]] = relationship(
         back_populates="owner", cascade="all, delete-orphan"
