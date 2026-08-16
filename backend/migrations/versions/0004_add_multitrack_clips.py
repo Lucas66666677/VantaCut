@@ -14,7 +14,7 @@ branch_labels = None
 depends_on = None
 
 
-track_type = postgresql.ENUM("MAIN_VIDEO", "B_ROLL", "AUDIO_OVERLAY", name="track_type")
+track_type = postgresql.ENUM("MAIN_VIDEO", "B_ROLL", "AUDIO_OVERLAY", name="track_type", create_type=False)
 
 
 def upgrade() -> None:

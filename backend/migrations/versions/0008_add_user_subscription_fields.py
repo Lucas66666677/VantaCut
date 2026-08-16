@@ -14,7 +14,7 @@ branch_labels = None
 depends_on = None
 
 
-subscription_tier = postgresql.ENUM("free", "pro", name="subscription_tier")
+subscription_tier = postgresql.ENUM("free", "pro", name="subscription_tier", create_type=False)
 
 
 def upgrade() -> None:

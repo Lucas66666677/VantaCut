@@ -14,13 +14,13 @@ branch_labels = None
 depends_on = None
 
 
-media_type = postgresql.ENUM("VIDEO", "AUDIO", "IMAGE", name="media_type")
+media_type = postgresql.ENUM("VIDEO", "AUDIO", "IMAGE", name="media_type", create_type=False)
 analysis_type = postgresql.ENUM(
     "TEMPLATE", "ROUGH_CUT", "TRANSCRIPTION", "MOOD", name="analysis_type"
-)
+, create_type=False)
 render_status = postgresql.ENUM(
     "QUEUED", "PROCESSING", "COMPLETED", "FAILED", name="render_status"
-)
+, create_type=False)
 
 
 def upgrade() -> None:
