@@ -1,5 +1,6 @@
 from fastapi import APIRouter
 
+from app.api.v1.auth import router as auth_router
 from app.api.v1.media import router as media_router
 from app.api.v1.ai import router as ai_router
 from app.api.v1.analysis import router as analysis_router
@@ -77,6 +78,7 @@ from app.api.v1.spatial_text import router as spatial_text_router
 from app.api.v1.wireless_cameras import mobile_router as wireless_camera_mobile_router, router as wireless_camera_router
 
 api_router = APIRouter(prefix="/api/v1")
+api_router.include_router(auth_router)
 api_router.include_router(media_router)
 api_router.include_router(ai_router)
 api_router.include_router(analysis_router)
