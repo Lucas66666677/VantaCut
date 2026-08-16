@@ -25,7 +25,9 @@ jobs:
     timeout-minutes: 15
     services:
       postgres:
-        image: postgres:16
+        # pgvector/pgvector, not plain postgres — migration 0007 runs
+        # `CREATE EXTENSION vector`, which plain postgres images don't ship.
+        image: pgvector/pgvector:pg16
         env:
           POSTGRES_DB: video_editor
           POSTGRES_USER: video_editor
