@@ -167,6 +167,11 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     render_credits: Mapped[int] = mapped_column(Integer, default=10, nullable=False)
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    # Nullable: existing/seeded rows created before auth landed have no password
+    # and are therefore not login-able (see app.core.security.verify_password,
+    # which treats an empty/missing hash as a verification failure).
+    hashed_password: Mapped[str | None] = mapped_column(String(255))
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     projects: Mapped[list["Project"]] = relationship(
         back_populates="owner", cascade="all, delete-orphan"
@@ -439,7 +444,7 @@ class InteractivePlaybackSession(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     total_watch_seconds: Mapped[float] = mapped_column(Numeric(14, 3), default=0)
 
-    timeline: Mapped[Timeline] = relationship(back_populates="interactive_sessions")
+    timeline: Mapped["Timeline"] = relationship(back_populates="interactive_sessions")
     events: Mapped[list["InteractivePlaybackEvent"]] = relationship(
         back_populates="session", cascade="all, delete-orphan", order_by="InteractivePlaybackEvent.created_at"
     )

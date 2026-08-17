@@ -1,0 +1,77 @@
+name: Backend auth unit tests
+
+on:
+  pull_request:
+    paths:
+      - "backend/app/core/security.py"
+      - "backend/app/core/config.py"
+      - "backend/app/auth/**"
+      - "backend/app/api/v1/auth.py"
+      - "backend/app/models/entities.py"
+      - "backend/migrations/**"
+      - "backend/tests/test_auth.py"
+      - "backend/tests/conftest.py"
+      - "backend/tests/test_alembic_version_column_width.py"
+      - "backend/requirements.txt"
+      - ".github/workflows/backend-auth-tests.yml"
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  auth-tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    services:
+      postgres:
+        # pgvector/pgvector, not plain postgres — migration 0007 runs
+        # `CREATE EXTENSION vector`, which plain postgres images don't ship.
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_DB: video_editor
+          POSTGRES_USER: video_editor
+          POSTGRES_PASSWORD: video_editor_dev
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U video_editor"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql+psycopg://video_editor:video_editor_dev@localhost:5432/video_editor
+      # CI-only secret, never reused anywhere real. Production sets JWT_SECRET_KEY
+      # via the host's real secret manager, not this file.
+      JWT_SECRET_KEY: ci-test-only-secret-do-not-reuse-1234567890
+      ENVIRONMENT: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install the minimal dependency set this test slice needs
+        working-directory: backend
+        run: |
+          pip install \
+            fastapi==0.115.6 \
+            "uvicorn[standard]==0.34.0" \
+            sqlalchemy==2.0.36 \
+            "psycopg[binary]==3.2.3" \
+            alembic==1.14.0 \
+            pydantic-settings==2.7.1 \
+            python-multipart==0.0.20 \
+            pgvector==0.3.6 \
+            bcrypt==4.2.1 \
+            PyJWT==2.10.1 \
+            pytest==8.3.4 \
+            httpx==0.27.2
+      - name: Apply database migrations
+        working-directory: backend
+        run: alembic upgrade head
+      - name: Verify alembic_version.version_num is wide enough
+        working-directory: backend
+        run: python -m pytest tests/test_alembic_version_column_width.py -v
+      - name: Run auth security tests
+        working-directory: backend
+        run: python -m pytest tests/test_auth.py -v

@@ -15,9 +15,23 @@ depends_on = None
 
 
 def upgrade() -> None:
-    social_platform = sa.Enum("youtube", "tiktok", name="social_platform")
-    post_status = sa.Enum("queued", "publishing", "published", "awaiting_creator", "failed", name="social_post_status")
-    experiment_status = sa.Enum("active", "completed", "insufficient_data", "failed", name="thumbnail_experiment_status")
+    # postgresql.ENUM (not sa.Enum) with create_type=False: a plain
+    # sa.Enum's create_type flag is dropped when SQLAlchemy adapts it to
+    # the native PG ENUM for column-level DDL (adapt_emulated_to_native()
+    # only carries create_type over when the source type is already
+    # NativeForEmulated), so the op.create_table() calls below would
+    # silently re-CREATE TYPE and collide with the explicit .create() calls.
+    # See migrations/env.py and 0001_initial.py / 0028_add_distributed_compute.py
+    # for the same fix.
+    social_platform = postgresql.ENUM("youtube", "tiktok", name="social_platform", create_type=False)
+    post_status = postgresql.ENUM(
+        "queued", "publishing", "published", "awaiting_creator", "failed",
+        name="social_post_status", create_type=False,
+    )
+    experiment_status = postgresql.ENUM(
+        "active", "completed", "insufficient_data", "failed",
+        name="thumbnail_experiment_status", create_type=False,
+    )
     bind = op.get_bind()
     social_platform.create(bind, checkfirst=True)
     post_status.create(bind, checkfirst=True)
