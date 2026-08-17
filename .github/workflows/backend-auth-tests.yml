@@ -11,6 +11,7 @@ on:
       - "backend/migrations/**"
       - "backend/tests/test_auth.py"
       - "backend/tests/conftest.py"
+      - "backend/tests/test_alembic_version_column_width.py"
       - "backend/requirements.txt"
       - ".github/workflows/backend-auth-tests.yml"
   push:
@@ -68,6 +69,9 @@ jobs:
       - name: Apply database migrations
         working-directory: backend
         run: alembic upgrade head
+      - name: Verify alembic_version.version_num is wide enough
+        working-directory: backend
+        run: python -m pytest tests/test_alembic_version_column_width.py -v
       - name: Run auth security tests
         working-directory: backend
         run: python -m pytest tests/test_auth.py -v
