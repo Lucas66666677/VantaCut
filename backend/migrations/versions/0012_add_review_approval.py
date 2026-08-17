@@ -14,11 +14,18 @@ branch_labels = None
 depends_on = None
 
 
-review_status = sa.Enum(
+# postgresql.ENUM (not sa.Enum) with create_type=False: a plain sa.Enum's
+# create_type flag is dropped when SQLAlchemy adapts it to the native PG
+# ENUM for column-level DDL (adapt_emulated_to_native() only carries
+# create_type over when the source type is already NativeForEmulated), so
+# op.create_table() below would silently re-CREATE TYPE and collide with
+# the explicit .create() calls. See migrations/env.py and 0001_initial.py /
+# 0028_add_distributed_compute.py for the same fix.
+review_status = postgresql.ENUM(
     "draft", "in_review", "approved", "changes_requested", name="review_status", create_type=False
 )
-comment_status = sa.Enum("open", "resolved", name="comment_status", create_type=False)
-review_role = sa.Enum("reviewer", "approver", name="review_role", create_type=False)
+comment_status = postgresql.ENUM("open", "resolved", name="comment_status", create_type=False)
+review_role = postgresql.ENUM("reviewer", "approver", name="review_role", create_type=False)
 
 
 def upgrade() -> None:

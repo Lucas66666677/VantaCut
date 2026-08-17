@@ -13,7 +13,14 @@ down_revision = "0017_add_auto_director_runs"
 branch_labels = None
 depends_on = None
 
-voice_profile_status = sa.Enum(
+# postgresql.ENUM (not sa.Enum) with create_type=False: a plain sa.Enum's
+# create_type flag is dropped when SQLAlchemy adapts it to the native PG
+# ENUM for column-level DDL (adapt_emulated_to_native() only carries
+# create_type over when the source type is already NativeForEmulated), so
+# op.create_table() below would silently re-CREATE TYPE and collide with
+# the explicit .create() call. See migrations/env.py and 0001_initial.py /
+# 0028_add_distributed_compute.py for the same fix.
+voice_profile_status = postgresql.ENUM(
     "queued", "extracting", "ready", "failed", name="voice_profile_status", create_type=False
 )
 
