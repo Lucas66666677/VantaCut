@@ -17,6 +17,7 @@ depends_on = None
 agent_edit_status = sa.Enum(
     "queued", "planning", "applying", "completed", "failed",
     name="agent_edit_status",
+    create_type=False,
 )
 
 

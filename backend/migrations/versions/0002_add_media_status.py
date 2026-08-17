@@ -15,7 +15,8 @@ depends_on = None
 
 def upgrade() -> None:
     media_status = sa.Enum(
-        "UPLOADING", "PROCESSING", "READY", "FAILED", name="media_status"
+        "UPLOADING", "PROCESSING", "READY", "FAILED", name="media_status",
+        create_type=False,
     )
     media_status.create(op.get_bind(), checkfirst=True)
     op.add_column(

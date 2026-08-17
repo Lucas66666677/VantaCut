@@ -13,7 +13,9 @@ down_revision = "0017_add_auto_director_runs"
 branch_labels = None
 depends_on = None
 
-voice_profile_status = sa.Enum("queued", "extracting", "ready", "failed", name="voice_profile_status")
+voice_profile_status = sa.Enum(
+    "queued", "extracting", "ready", "failed", name="voice_profile_status", create_type=False
+)
 
 
 def upgrade() -> None:

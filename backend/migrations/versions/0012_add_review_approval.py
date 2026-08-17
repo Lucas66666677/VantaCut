@@ -14,9 +14,11 @@ branch_labels = None
 depends_on = None
 
 
-review_status = sa.Enum("draft", "in_review", "approved", "changes_requested", name="review_status")
-comment_status = sa.Enum("open", "resolved", name="comment_status")
-review_role = sa.Enum("reviewer", "approver", name="review_role")
+review_status = sa.Enum(
+    "draft", "in_review", "approved", "changes_requested", name="review_status", create_type=False
+)
+comment_status = sa.Enum("open", "resolved", name="comment_status", create_type=False)
+review_role = sa.Enum("reviewer", "approver", name="review_role", create_type=False)
 
 
 def upgrade() -> None:

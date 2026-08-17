@@ -15,9 +15,15 @@ depends_on = None
 
 
 def upgrade() -> None:
-    social_platform = sa.Enum("youtube", "tiktok", name="social_platform")
-    post_status = sa.Enum("queued", "publishing", "published", "awaiting_creator", "failed", name="social_post_status")
-    experiment_status = sa.Enum("active", "completed", "insufficient_data", "failed", name="thumbnail_experiment_status")
+    social_platform = sa.Enum("youtube", "tiktok", name="social_platform", create_type=False)
+    post_status = sa.Enum(
+        "queued", "publishing", "published", "awaiting_creator", "failed",
+        name="social_post_status", create_type=False,
+    )
+    experiment_status = sa.Enum(
+        "active", "completed", "insufficient_data", "failed",
+        name="thumbnail_experiment_status", create_type=False,
+    )
     bind = op.get_bind()
     social_platform.create(bind, checkfirst=True)
     post_status.create(bind, checkfirst=True)

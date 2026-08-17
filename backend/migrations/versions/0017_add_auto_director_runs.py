@@ -17,6 +17,7 @@ depends_on = None
 auto_director_status = sa.Enum(
     "queued", "scripting", "researching", "narrating", "editing", "ready_for_review", "failed",
     name="auto_director_status",
+    create_type=False,
 )
 
 
