@@ -92,8 +92,21 @@ jobs:
       # unchanged — the harness routes exist only because /studio itself
       # cannot compile at all in this environment until that unrelated bug
       # is fixed, independent of AuthGate.)
+      # Browser binary only, no `--with-deps` apt-get install: two
+      # consecutive runs of this workflow hung indefinitely (still no output
+      # after 9+ minutes, well past the point a healthy `apt-get install`
+      # would finish) inside `--with-deps`'s system-package installation on
+      # this ubuntu-24.04 runner, after successfully fetching all apt index
+      # files (Ign:/Get: lines for archive.ubuntu.com all completed; the
+      # subsequent `apt-get install` of chromium's shared-library
+      # dependencies is what never produced further output) — an
+      # infrastructure/mirror issue, not something introduced by this PR.
+      # GitHub's hosted ubuntu-24.04 runner image already ships the shared
+      # libraries headless Chromium needs for the common case; if that turns
+      # out incomplete here, the browser launch fails with a specific
+      # missing-library error in the next step instead of hanging silently.
       - name: Install Playwright browser
-        run: npx playwright install --with-deps chromium
+        run: npx playwright install chromium
       - name: Start the dev server
         run: |
           npm run dev -- --hostname 0.0.0.0 --port 3000 &
