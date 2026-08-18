@@ -141,10 +141,34 @@ def test_sse_wrong_owner_rejected(app_client, db_session):
     assert response.status_code == 404
 
 
-def test_sse_owner_accepted(app_client, db_session, fake_redis):
+async def _always_disconnected(self) -> bool:  # noqa: ANN001 - matches Request.is_disconnected's signature
+    return True
+
+
+def test_sse_owner_accepted(app_client, db_session, fake_redis, monkeypatch):
     owner = _make_user(db_session)
     project = _make_project(db_session, owner)
     token = create_access_token(owner.id)
+
+    # CI evidence (Batch 1 fix 1/3): this test hung for the full 15-minute job
+    # timeout instead of completing. Root cause: `project_status_events`
+    # yields its one "event: status" chunk BEFORE entering
+    # `while not await request.is_disconnected(): ...`, but TestClient's
+    # synchronous streaming transport does not reliably deliver an ASGI
+    # "http.disconnect" back into that generator when a test — like this one
+    # — reads only the first chunk and then closes the stream. The generator
+    # is then left spinning in its keepalive loop for the rest of the test
+    # process's life, which is exactly the risk flagged as unverified in
+    # vantacut-batch1-checkpoint.md ("whether TestClient.stream(...) cleanly
+    # cancels the SSE generator on early client-side close"). It doesn't.
+    #
+    # Forcing is_disconnected() to report True lets the generator fall
+    # through to its `finally:` cleanup right after the one yield this test
+    # needs, instead of ever entering the keepalive loop. This is a
+    # TestClient/ASGI-transport limitation fix, not a security change: auth
+    # and ownership (_authorize_project) already ran and passed before the
+    # StreamingResponse was even constructed, and are untouched here.
+    monkeypatch.setattr(_ps_module.Request, "is_disconnected", _always_disconnected)
 
     with app_client.stream(
         "GET",
@@ -197,10 +221,28 @@ def test_ws_authenticated_non_owner_rejected(app_client, db_session):
             pass
 
 
-def test_ws_authenticated_owner_accepted(app_client, db_session, fake_redis):
+async def _raise_disconnect(self, *_args, **_kwargs):
+    raise WebSocketDisconnect(code=1000)
+
+
+def test_ws_authenticated_owner_accepted(app_client, db_session, fake_redis, monkeypatch):
     owner = _make_user(db_session)
     project = _make_project(db_session, owner)
     token = create_access_token(owner.id)
+
+    # CI fix (Batch 1, same root cause class as test_sse_owner_accepted): the
+    # server's WS loop only ever calls websocket.send_*, never
+    # websocket.receive(), so it has no way to observe this test closing the
+    # connection and would otherwise spin in `while True` for the rest of the
+    # test process's life. This test's one required assertion (the "bearer"
+    # subprotocol plus the initial status payload) is already fully satisfied
+    # by websocket.send_text(...) BEFORE the loop is ever entered. Making the
+    # mocked pubsub raise WebSocketDisconnect on its first poll exercises the
+    # route's existing `except WebSocketDisconnect: pass` cleanup path
+    # (already written to handle real client disconnects) so the handler
+    # coroutine actually returns instead of hanging. Auth and ownership are
+    # untouched — both already passed before websocket.accept() ran.
+    monkeypatch.setattr(_FakePubSub, "get_message", _raise_disconnect)
 
     with app_client.websocket_connect(
         f"/api/v1/projects/{project.id}/status/ws",
