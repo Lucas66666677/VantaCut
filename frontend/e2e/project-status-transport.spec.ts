@@ -11,7 +11,15 @@ import { expect, test, type Page } from "@playwright/test";
  * (installed via addInitScript before any app code runs) rather than a real
  * socket or a WebSocket-routing API, so every assertion — the exact
  * constructor arguments, message delivery, and close-code handling — is
- * deterministic and has no dependency on real network timing.
+ * deterministic and has no dependency on real network timing. The mock only
+ * intercepts connections to the app's own project-status endpoint
+ * (URLs containing "/status/ws") — Next dev's own HMR client also opens a
+ * WebSocket (to /_next/webpack-hmr) on every page load, and since
+ * addInitScript replaces the global constructor before ANY page script
+ * runs, an unfiltered mock captures that connection too, as __wsCalls[0]/
+ * __wsInstances[0] instead of the app's real one (confirmed via a
+ * temporary CI diagnostic — this was silently corrupting every assertion
+ * that indexed into these arrays).
  */
 
 const TOKEN_STORAGE_KEY = "vantacut_access_token";
@@ -53,23 +61,34 @@ test.describe("SSE transport (authenticated fetch-stream)", () => {
     await signInAsAuthenticated(page);
     await page.goto(`/test-harness/project-status?projectId=${PROJECT_ID}&transport=sse`);
 
-    await expect(page.getByTestId("harness-status")).toContainText('"progress":42');
-    await expect(page.getByTestId("harness-connected")).toHaveText("true");
+    // page.route().fulfill() always delivers a single, complete,
+    // immediately-closing response body — it cannot represent the real
+    // backend's held-open, keepalive'd stream (see use-project-status.ts's
+    // doc comment on consumeEventStream). So right after processing this
+    // one event, the app correctly — by design, see connectSse's "stream
+    // ended" handling — treats the now-closed body as a dropped connection
+    // and flips `connected` back to false while scheduling a reconnect,
+    // exactly as it should for a real disconnect. That makes the
+    // `connected: true` window here transient rather than a value the app
+    // settles into, so this polls at waitForFunction's default
+    // (requestAnimationFrame-driven, much tighter than a normal assertion's
+    // retry interval) granularity to reliably observe it, instead of two
+    // sequential toHaveText()/toContainText() checks that can each land
+    // after it has already flipped back.
+    await page.waitForFunction(
+      () => {
+        const status = document.querySelector('[data-testid="harness-status"]')?.textContent ?? "";
+        const connected = document.querySelector('[data-testid="harness-connected"]')?.textContent ?? "";
+        return status.includes('"progress":42') && connected === "true";
+      },
+      { timeout: 5_000 },
+    );
   });
 
   test("a 401 from the status stream does not enter an uncontrolled reconnect loop", async ({ page }) => {
     let requestCount = 0;
-    // TEMPORARY DIAGNOSTIC (to be removed): confirm whether a second request
-    // is a real reconnect (spaced ~1s+ apart, per the app's backoff) versus
-    // an artifact of something else (e.g. dev-mode double effect
-    // invocation), and surface any browser console activity (React/Next
-    // dev warnings) around the same window.
-    const requestTimestamps: number[] = [];
-    page.on("console", (msg) => console.log("PAGE_CONSOLE_DEBUG", msg.type(), msg.text()));
     await page.route("**/api/v1/projects/**/status", async (route) => {
       requestCount += 1;
-      requestTimestamps.push(Date.now());
-      console.log("SSE_401_REQUEST_DEBUG", requestCount, "at", Date.now());
       await route.fulfill({ status: 401, contentType: "application/json", body: JSON.stringify({ detail: "Could not validate credentials" }) });
     });
 
@@ -80,7 +99,6 @@ test.describe("SSE transport (authenticated fetch-stream)", () => {
     // Give the 1s/2s/4s... backoff schedule ample time to have fired at
     // least once more if the (buggy) behavior were "reconnect on 401".
     await page.waitForTimeout(3_000);
-    console.log("SSE_401_TIMESTAMPS_DEBUG", JSON.stringify(requestTimestamps));
     expect(requestCount).toBe(1);
     // A 401 also means the whole session is invalid, not just this stream —
     // the frontend should have dropped it.
@@ -119,15 +137,28 @@ test.describe("WebSocket transport (bearer subprotocol)", () => {
       const w = window as any;
       w.__wsCalls = [];
       w.__wsInstances = [];
+      const RealWebSocket = window.WebSocket;
       class MockWebSocket {
-        url: string;
+        url!: string;
         protocols: unknown;
         readyState = 0;
         onopen: ((event: unknown) => void) | null = null;
         onmessage: ((event: { data: string }) => void) | null = null;
         onclose: ((event: { code: number }) => void) | null = null;
 
-        constructor(url: string, protocols: unknown) {
+        constructor(url: string, protocols?: unknown) {
+          // Only the app's own project-status connection is mocked. Next
+          // dev's own HMR client also constructs a WebSocket (to
+          // /_next/webpack-hmr) on every page load, and since this global
+          // override applies before any page script runs — including
+          // Next's — an unfiltered mock captures that connection too,
+          // ending up as index 0 instead of the app's real one. Anything
+          // that isn't the project-status endpoint falls through to the
+          // real WebSocket untouched.
+          if (!url.includes("/status/ws")) {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            return new RealWebSocket(url, protocols as any) as unknown as MockWebSocket;
+          }
           this.url = url;
           this.protocols = protocols;
           w.__wsCalls.push({ url, protocols });
@@ -149,14 +180,13 @@ test.describe("WebSocket transport (bearer subprotocol)", () => {
     await signInAsAuthenticated(page);
     await page.goto(`/test-harness/project-status?projectId=${PROJECT_ID}&transport=websocket`);
 
+    // page.goto() resolves once navigation/load completes, not once the
+    // app's async auth-restore-then-connect chain has actually reached the
+    // point of constructing the WebSocket — so this polls rather than
+    // reading __wsCalls immediately.
+    await expect.poll(async () => page.evaluate(() => (window as any).__wsCalls.length)).toBeGreaterThanOrEqual(1);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const calls = await page.evaluate(() => (window as any).__wsCalls);
-    // TEMPORARY DIAGNOSTIC (to be removed): dump every WebSocket() call this
-    // page made, to check whether something other than the app's own
-    // project-status connection (e.g. Next dev's HMR client) is also being
-    // captured by the global WebSocket mock installed in installMockWebSocket().
-    console.log("WS_CALLS_DEBUG", JSON.stringify(calls, null, 2));
-    expect(calls.length).toBeGreaterThanOrEqual(1);
     expect(calls[0].protocols).toEqual(["bearer", TEST_TOKEN]);
     expect(calls[0].url).not.toContain(TEST_TOKEN);
   });
@@ -166,6 +196,7 @@ test.describe("WebSocket transport (bearer subprotocol)", () => {
     await signInAsAuthenticated(page);
     await page.goto(`/test-harness/project-status?projectId=${PROJECT_ID}&transport=websocket`);
 
+    await expect.poll(async () => page.evaluate(() => (window as any).__wsInstances.length)).toBeGreaterThanOrEqual(1);
     await page.evaluate(() => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const ws = (window as any).__wsInstances[0];
@@ -181,6 +212,7 @@ test.describe("WebSocket transport (bearer subprotocol)", () => {
     await signInAsAuthenticated(page);
     await page.goto(`/test-harness/project-status?projectId=${PROJECT_ID}&transport=websocket`);
 
+    await expect.poll(async () => page.evaluate(() => (window as any).__wsInstances.length)).toBeGreaterThanOrEqual(1);
     await page.evaluate(() => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const ws = (window as any).__wsInstances[0];
@@ -200,6 +232,7 @@ test.describe("WebSocket transport (bearer subprotocol)", () => {
     await signInAsAuthenticated(page);
     await page.goto(`/test-harness/project-status?projectId=${PROJECT_ID}&transport=websocket`);
 
+    await expect.poll(async () => page.evaluate(() => (window as any).__wsInstances.length)).toBeGreaterThanOrEqual(1);
     await page.evaluate(() => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const ws = (window as any).__wsInstances[0];

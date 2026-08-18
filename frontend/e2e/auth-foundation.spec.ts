@@ -64,7 +64,15 @@ test("failed login does not store a token and shows a generic error", async ({ p
   await page.getByLabel("密碼").fill("totally-wrong-password");
   await page.getByRole("button", { name: "登入" }).click();
 
-  await expect(page.getByRole("alert")).toBeVisible();
+  // Scoped by text, not just role: Next.js's App Router injects its own
+  // <div role="alert" aria-live="assertive" id="__next-route-announcer__">
+  // (a screen-reader route-change announcer) into every page, so a bare
+  // getByRole("alert") matches two elements here and fails Playwright's
+  // strict-mode check. That announcer element is normal, unrelated
+  // Next.js framework behavior, not something this app renders — it was
+  // only ever invisible to this test before because app/test-harness/auth
+  // 404'd on every request (see that page's doc comment).
+  await expect(page.getByRole("alert").filter({ hasText: "登入失敗" })).toBeVisible();
   expect(await readStoredToken(page)).toBeNull();
   // The form itself must still be showing — a failed login never proceeds
   // into the authenticated app.
