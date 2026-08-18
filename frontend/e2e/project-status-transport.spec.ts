@@ -62,7 +62,18 @@ test.describe("SSE transport (authenticated fetch-stream)", () => {
     // mutation of the two harness testids with a timestamp, so CI evidence
     // can show the actual sequence/timing of "connected" vs "status"
     // updates instead of guessing why a 5s waitForFunction poll times out.
-    await page.evaluate(() => {
+    // MUST be an addInitScript, not a one-shot page.evaluate(): the actual
+    // navigation that matters here (the second page.goto below, with the
+    // query params) is a full cross-document navigation — a completely
+    // fresh `window` — so a page.evaluate() run beforehand on the prior
+    // document is discarded along with that document and never sees any of
+    // the activity under test. This was confirmed by CI run #19: the
+    // page.evaluate() version produced literal `SNAP_DEBUG undefined`,
+    // because window.__snap never existed on the document that was
+    // actually still alive when read back. addInitScript re-arms itself on
+    // every subsequent navigation of this page, so it's present on the
+    // document we actually care about.
+    await page.addInitScript(() => {
       const w = window as any;
       w.__snap = [] as Array<{ t: number; status: string; connected: string }>;
       const start = performance.now();
@@ -71,11 +82,16 @@ test.describe("SSE transport (authenticated fetch-stream)", () => {
         const connected = document.querySelector('[data-testid="harness-connected"]')?.textContent ?? "";
         w.__snap.push({ t: Math.round(performance.now() - start), status, connected });
       };
-      record();
-      const observer = new MutationObserver(record);
-      const target = document.querySelector("main");
-      if (target) observer.observe(target, { childList: true, characterData: true, subtree: true });
-      w.__snapObserver = observer;
+      const attach = () => {
+        const target = document.querySelector("main");
+        if (target) {
+          record();
+          new MutationObserver(record).observe(target, { childList: true, characterData: true, subtree: true });
+        } else {
+          requestAnimationFrame(attach);
+        }
+      };
+      attach();
     });
 
     await signInAsAuthenticated(page);
@@ -142,9 +158,22 @@ test.describe("SSE transport (authenticated fetch-stream)", () => {
     let requestStarted = false;
     await page.route("**/api/v1/projects/**/status", async (route) => {
       requestStarted = true;
-      // Hold the response open well past when the test navigates away, so
-      // an unaborted request would still be pending when we check.
-      await new Promise((resolve) => setTimeout(resolve, 5_000));
+      // Hold the response open past when the test navigates away, so an
+      // unaborted request would still be pending when we check — but NOT
+      // longer than the test's own observation window below. CI run #19's
+      // REQ_EVENTS_DEBUG evidence showed the request being intercepted
+      // (the "request" event) and then literally nothing else — no
+      // requestfinished, no requestfailed — for the full 3s the test was
+      // watching, because this delay used to be 5_000ms: the test stopped
+      // watching before this handler ever got around to calling
+      // route.fulfill()/erroring, so the outcome was structurally
+      // unobservable regardless of what the browser actually does on
+      // navigation. A short delay here (well under the poll timeout below)
+      // guarantees the request is still in-flight at navigation time
+      // (navigation happens within milliseconds of requestStarted flipping)
+      // while leaving the observation window enough room to actually see
+      // what happens once this handler resolves.
+      await new Promise((resolve) => setTimeout(resolve, 500));
       await route.fulfill({ status: 200, contentType: "text/event-stream", body: "event: status\ndata: {}\n\n" });
     });
 
@@ -188,15 +217,18 @@ test.describe("SSE transport (authenticated fetch-stream)", () => {
     await page.goto("about:blank");
     // Give the diagnostic log time to accumulate any late-arriving events
     // before we dump it, independent of the real assertion below.
-    await page.waitForTimeout(3_000).catch(() => {});
+    await page.waitForTimeout(1_500).catch(() => {});
     // eslint-disable-next-line no-console
     console.log("REQ_EVENTS_DEBUG", JSON.stringify(eventLog));
 
     // Give the requestfailed event more room to surface than a flat 500ms:
     // it has to round-trip through CDP for a request tied to a document
     // that cross-navigation is simultaneously tearing down, which is a
-    // slower, less deterministic path than an ordinary same-page failure.
-    await expect.poll(() => failedUrls.length, { timeout: 3_000 }).toBeGreaterThan(0);
+    // slower, less deterministic path than an ordinary same-page failure —
+    // and, per the comment on the route handler above, this window must
+    // comfortably exceed that handler's own artificial delay (500ms) or the
+    // outcome can never be observed at all regardless of browser behavior.
+    await expect.poll(() => failedUrls.length, { timeout: 4_000 }).toBeGreaterThan(0);
   });
 });
 
