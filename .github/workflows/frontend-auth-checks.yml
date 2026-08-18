@@ -1,0 +1,75 @@
+name: Frontend auth foundation checks
+
+# Scoped to this stacked PR's own diff (frontend auth foundation: token
+# storage, auth store/UI, authenticated fetch helper, and the project-status
+# SSE/WebSocket transport rewrite). Deliberately separate from the existing,
+# unrelated `render-quality.yml` / render-contract job (a much heavier
+# full-stack docker-compose pipeline with a pre-existing, already-documented
+# baseline failure — see artifacts/service-readiness/deployment-execution-final.md).
+# This workflow gives real CI evidence (typecheck/build/tests) for the
+# frontend auth code specifically, self-contained and fast, without touching
+# or depending on that unrelated pipeline.
+
+on:
+  pull_request:
+    paths:
+      - "frontend/**"
+      - ".github/workflows/frontend-auth-checks.yml"
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  frontend-auth-checks:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      NEXT_PUBLIC_API_URL: http://127.0.0.1:8000
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+      # No "Lint" step: this repo has no ESLint config or `eslint` dependency
+      # anywhere (verified — not something this PR's scope introduced or
+      # removed), so `npm run lint` (`next lint`) has nothing to run against
+      # and would fail on repo-wide tooling absence unrelated to this diff.
+      # Typecheck + build below still catch real type errors.
+      - name: Typecheck
+        run: npx tsc --noEmit
+      - name: Build (real production build; also exercises Next's own type pass over the full app)
+        run: npm run build
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
+      - name: Start the production server
+        run: |
+          npx next start --port 3000 &
+          echo $! > /tmp/next-start.pid
+          for attempt in $(seq 1 30); do
+            curl --fail --silent http://127.0.0.1:3000/ > /dev/null && exit 0
+            sleep 1
+          done
+          echo "frontend server did not become ready in time" >&2
+          exit 1
+      - name: Run frontend auth foundation tests
+        env:
+          PLAYWRIGHT_BASE_URL: http://127.0.0.1:3000
+        run: npx playwright test e2e/auth-foundation.spec.ts e2e/project-status-transport.spec.ts
+      - name: Stop the production server
+        if: always()
+        run: kill "$(cat /tmp/next-start.pid)" 2>/dev/null || true
+      - name: Upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-auth-checks-playwright-report
+          path: frontend/playwright-report/
