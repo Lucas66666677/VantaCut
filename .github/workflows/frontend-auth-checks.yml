@@ -109,7 +109,7 @@ jobs:
         run: npx playwright install chromium
       - name: Start the dev server
         run: |
-          npm run dev -- --hostname 0.0.0.0 --port 3000 &
+          npm run dev -- --hostname 0.0.0.0 --port 3000 > /tmp/next-dev.log 2>&1 &
           echo $! > /tmp/next-dev.pid
           for attempt in $(seq 1 60); do
             curl --fail --silent http://127.0.0.1:3000/ > /dev/null && exit 0
@@ -117,6 +117,24 @@ jobs:
           done
           echo "frontend server did not become ready in time" >&2
           exit 1
+      # TEMPORARY diagnostic step: the previous run of this workflow (all
+      # steps otherwise green) still had every auth-foundation.spec.ts and
+      # project-status-transport.spec.ts test fail identically, including on
+      # app/__test-harness__/auth, which has zero dependency on the known
+      # broken adaptive-editor-workspace.tsx chain and zero cross-origin
+      # fetch involved. That means neither of the two previously-identified
+      # causes was the (or the only) real root cause. Print the dev server's
+      # own compile/runtime log plus the raw HTML actually returned for the
+      # harness route, so the next fix is evidence-based rather than another
+      # guess. Remove once root-caused.
+      - name: Diagnose harness route rendering
+        if: always()
+        run: |
+          echo "----- curl http://127.0.0.1:3000/__test-harness__/auth -----"
+          curl --silent http://127.0.0.1:3000/__test-harness__/auth || true
+          echo
+          echo "----- next dev server log (/tmp/next-dev.log) -----"
+          cat /tmp/next-dev.log || true
       - name: Run frontend auth foundation tests
         env:
           PLAYWRIGHT_BASE_URL: http://127.0.0.1:3000
