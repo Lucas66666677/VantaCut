@@ -37,12 +37,14 @@ jobs:
       # loads). page.route().fulfill() mocks don't add CORS headers, so a
       # cross-origin API URL here silently fails every mocked request (the
       # browser blocks the response before the page ever sees it) without
-      # page.route() itself reporting an error — this was confirmed as the
-      # root cause of every project-status-transport.spec.ts failure in an
-      # earlier run of this workflow (NEXT_PUBLIC_API_URL pointed at
-      # 127.0.0.1:8000, nothing listens there in this job, and the mocked
-      # /auth/me response was blocked before AuthGate ever reached
-      # "authenticated"). Same-origin sidesteps CORS and COEP entirely.
+      # page.route() itself reporting an error. This was a real, independent
+      # bug (NEXT_PUBLIC_API_URL originally pointed at 127.0.0.1:8000,
+      # nothing listens there in this job) — though it turned out to be
+      # masked by a separate routing bug (see app/test-harness/*/page.tsx's
+      # doc comments: the harness routes 404'd entirely for unrelated
+      # reasons, so this CORS issue was never actually exercised until that
+      # was fixed too). Same-origin sidesteps CORS and COEP entirely and
+      # remains correct regardless.
       NEXT_PUBLIC_API_URL: http://127.0.0.1:3000
     defaults:
       run:
@@ -84,8 +86,8 @@ jobs:
       # `next dev` and drive Playwright against it. The auth foundation and
       # project-status transport code under test (lib/auth/*,
       # features/auth/*, features/project-status/use-project-status.ts, and
-      # the Playwright-only harnesses at app/__test-harness__/auth and
-      # app/__test-harness__/project-status) has zero dependency on the
+      # the Playwright-only harnesses at app/test-harness/auth and
+      # app/test-harness/project-status) has zero dependency on the
       # broken adaptive-editor-workspace.tsx import chain, so this still
       # gives real, meaningful pass/fail evidence for this PR's diff. (The
       # real /studio entry point still wraps StudioLaunchpad in AuthGate
@@ -117,24 +119,6 @@ jobs:
           done
           echo "frontend server did not become ready in time" >&2
           exit 1
-      # TEMPORARY diagnostic step: the previous run of this workflow (all
-      # steps otherwise green) still had every auth-foundation.spec.ts and
-      # project-status-transport.spec.ts test fail identically, including on
-      # app/__test-harness__/auth, which has zero dependency on the known
-      # broken adaptive-editor-workspace.tsx chain and zero cross-origin
-      # fetch involved. That means neither of the two previously-identified
-      # causes was the (or the only) real root cause. Print the dev server's
-      # own compile/runtime log plus the raw HTML actually returned for the
-      # harness route, so the next fix is evidence-based rather than another
-      # guess. Remove once root-caused.
-      - name: Diagnose harness route rendering
-        if: always()
-        run: |
-          echo "----- curl http://127.0.0.1:3000/__test-harness__/auth -----"
-          curl --silent http://127.0.0.1:3000/__test-harness__/auth || true
-          echo
-          echo "----- next dev server log (/tmp/next-dev.log) -----"
-          cat /tmp/next-dev.log || true
       - name: Run frontend auth foundation tests
         env:
           PLAYWRIGHT_BASE_URL: http://127.0.0.1:3000
