@@ -75,12 +75,19 @@ test.describe("SSE transport (authenticated fetch-stream)", () => {
     // retry interval) granularity to reliably observe it, instead of two
     // sequential toHaveText()/toContainText() checks that can each land
     // after it has already flipped back.
+    // waitForFunction's signature is (pageFunction, arg, options) — the
+    // callback takes no argument, but that middle positional slot must
+    // still be filled (with undefined) for the timeout override in the
+    // third argument to actually apply; passing the options object as the
+    // second argument silently discards it as an unused `arg` and falls
+    // through to the test's full default timeout instead.
     await page.waitForFunction(
       () => {
         const status = document.querySelector('[data-testid="harness-status"]')?.textContent ?? "";
         const connected = document.querySelector('[data-testid="harness-connected"]')?.textContent ?? "";
         return status.includes('"progress":42') && connected === "true";
       },
+      undefined,
       { timeout: 5_000 },
     );
   });
@@ -115,10 +122,16 @@ test.describe("SSE transport (authenticated fetch-stream)", () => {
       await route.fulfill({ status: 200, contentType: "text/event-stream", body: "event: status\ndata: {}\n\n" });
     });
 
-    const abortedUrls: string[] = [];
+    // Match any failed request for this URL, not just ones whose errorText
+    // contains "ABORTED": Chromium's reported reason for a request torn
+    // down by cross-document navigation isn't guaranteed to be that exact
+    // string, and the thing actually under test is narrower and more
+    // important than the specific wording — that the request doesn't
+    // silently outlive the navigation.
+    const failedUrls: string[] = [];
     page.on("requestfailed", (request) => {
-      if (request.url().includes("/status") && request.failure()?.errorText.includes("ABORTED")) {
-        abortedUrls.push(request.url());
+      if (request.url().includes("/status")) {
+        failedUrls.push(request.url());
       }
     });
 
@@ -131,9 +144,12 @@ test.describe("SSE transport (authenticated fetch-stream)", () => {
     // identical race in the WebSocket tests below).
     await expect.poll(() => requestStarted).toBe(true);
     await page.goto("about:blank");
-    await page.waitForTimeout(500);
 
-    expect(abortedUrls.length).toBeGreaterThan(0);
+    // Give the requestfailed event more room to surface than a flat 500ms:
+    // it has to round-trip through CDP for a request tied to a document
+    // that cross-navigation is simultaneously tearing down, which is a
+    // slower, less deterministic path than an ordinary same-page failure.
+    await expect.poll(() => failedUrls.length, { timeout: 3_000 }).toBeGreaterThan(0);
   });
 });
 
