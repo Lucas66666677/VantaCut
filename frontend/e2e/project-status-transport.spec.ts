@@ -58,41 +58,48 @@ test.describe("SSE transport (authenticated fetch-stream)", () => {
       await route.fulfill({ status: 200, contentType: "text/event-stream", body: `event: status\ndata: ${payload}\n\n` });
     });
 
-    // TEMPORARY DIAGNOSTIC (not a real assertion): records every DOM
-    // mutation of the two harness testids with a timestamp, so CI evidence
-    // can show the actual sequence/timing of "connected" vs "status"
-    // updates instead of guessing why a 5s waitForFunction poll times out.
-    // MUST be an addInitScript, not a one-shot page.evaluate(): the actual
-    // navigation that matters here (the second page.goto below, with the
-    // query params) is a full cross-document navigation — a completely
-    // fresh `window` — so a page.evaluate() run beforehand on the prior
-    // document is discarded along with that document and never sees any of
-    // the activity under test. This was confirmed by CI run #19: the
-    // page.evaluate() version produced literal `SNAP_DEBUG undefined`,
-    // because window.__snap never existed on the document that was
-    // actually still alive when read back. addInitScript re-arms itself on
-    // every subsequent navigation of this page, so it's present on the
-    // document we actually care about.
+    // Records every DOM mutation of the two harness testids with a
+    // timestamp, and asserts against that recorded HISTORY rather than
+    // polling live DOM state. This is not incidental — it's the actual
+    // fix, arrived at via 3 rounds of CI evidence (runs #19-#21):
     //
-    // Observing `document.querySelector("main")` (round 2, CI run #20) was
-    // ALSO wrong, for a different reason: features/auth/auth-gate.tsx's
+    // Round 1 (run #19) used a one-shot page.evaluate() to install this
+    // recorder, which produced `SNAP_DEBUG undefined`: the test's second
+    // page.goto() below (the one with query params) is a full
+    // cross-document navigation — a fresh `window` — so anything installed
+    // beforehand via page.evaluate() is discarded before the activity
+    // under test happens. Fixed by switching to page.addInitScript(),
+    // which re-arms on every subsequent navigation of this page.
+    //
+    // Round 2 (run #20) observed `document.querySelector("main")`, which
+    // matched the WRONG element: features/auth/auth-gate.tsx's
     // `status === "loading"` branch renders its own, unrelated
-    // `<main className="grid min-h-screen ...">正在確認登入狀態…</main>` —
-    // a completely different element from the harness's own <main>. The
-    // diagnostic's rAF-poll found THAT loading <main> first (it exists
-    // before auth resolves), bound the MutationObserver to it, and then
-    // AuthGate unmounts/replaces that entire subtree once auth resolves
-    // (swapping to {children} + LogoutControl) — so the observed node is
-    // detached from the live document before the harness's own content
-    // (and its testid elements) ever exists, and the observer never fires
-    // again. Confirmed by CI run #20's evidence: a single snapshot at
-    // t=37ms with both fields as empty string (querySelector for the
-    // testids found nothing yet — not even the expected initial
-    // "false"/"null" render), then silence. Observing `document.body`
-    // instead sidesteps this entirely: body itself is never replaced
-    // across AuthGate's loading -> unauthenticated/authenticated
-    // transitions, only its descendants are swapped, and subtree:true
-    // still catches mutations anywhere underneath it.
+    // `<main>正在確認登入狀態…</main>` that exists before auth resolves.
+    // AuthGate then unmounts/replaces that entire subtree once auth
+    // resolves (swapping to {children} + LogoutControl), so the recorder,
+    // bound to a now-detached node, never saw the harness's real content
+    // (confirmed: one snapshot at t=37ms, both fields empty, then
+    // silence). Fixed by observing `document.body` instead, which
+    // persists across AuthGate's state transitions.
+    //
+    // Round 3 (run #21), with the recorder finally attached to the right
+    // node, produced the real answer to the original question. The
+    // history showed `connected:true` co-occurring with `"progress":42`
+    // for real — e.g. `{"t":1077,...connected:true}` immediately followed
+    // by `{"t":1078,...connected:false}`, a ~1ms window — repeating on
+    // every ~1s reconnect cycle for the full 5s the test watched. The
+    // state exists exactly as the app's design predicts (see the comment
+    // below); what doesn't exist is any way for page.waitForFunction's
+    // default requestAnimationFrame-driven polling to reliably catch a
+    // window that narrow, because both the "connected:true" mutation and
+    // the following "connected:false" mutation can — and, empirically,
+    // consistently do — land within the same animation frame, before the
+    // browser ever paints the intermediate state waitForFunction is
+    // polling for. A MutationObserver callback, by contrast, runs as a
+    // microtask right after each individual mutation, so it does catch
+    // both states even when they're separated by no paint at all — which
+    // is exactly why this recorder (not a live poll) is the correct tool
+    // for asserting this, not just for debugging it.
     await page.addInitScript(() => {
       const w = window as any;
       w.__snap = [] as Array<{ t: number; status: string; connected: string }>;
@@ -123,34 +130,16 @@ test.describe("SSE transport (authenticated fetch-stream)", () => {
     // one event, the app correctly — by design, see connectSse's "stream
     // ended" handling — treats the now-closed body as a dropped connection
     // and flips `connected` back to false while scheduling a reconnect,
-    // exactly as it should for a real disconnect. That makes the
-    // `connected: true` window here transient rather than a value the app
-    // settles into, so this polls at waitForFunction's default
-    // (requestAnimationFrame-driven, much tighter than a normal assertion's
-    // retry interval) granularity to reliably observe it, instead of two
-    // sequential toHaveText()/toContainText() checks that can each land
-    // after it has already flipped back.
-    // waitForFunction's signature is (pageFunction, arg, options) — the
-    // callback takes no argument, but that middle positional slot must
-    // still be filled (with undefined) for the timeout override in the
-    // third argument to actually apply; passing the options object as the
-    // second argument silently discards it as an unused `arg` and falls
-    // through to the test's full default timeout instead.
-    try {
-      await page.waitForFunction(
-        () => {
-          const status = document.querySelector('[data-testid="harness-status"]')?.textContent ?? "";
-          const connected = document.querySelector('[data-testid="harness-connected"]')?.textContent ?? "";
-          return status.includes('"progress":42') && connected === "true";
-        },
-        undefined,
-        { timeout: 5_000 },
-      );
-    } finally {
-      const snap = await page.evaluate(() => (window as any).__snap);
-      // eslint-disable-next-line no-console
-      console.log("SNAP_DEBUG", JSON.stringify(snap));
-    }
+    // exactly as it should for a real disconnect, then reconnects (and
+    // re-receives the same mocked event) roughly every second. Wait for a
+    // couple of those cycles so the recorder above has multiple chances to
+    // capture the transient co-occurrence, then assert against the
+    // recorded history instead of the live DOM.
+    await expect(page.getByTestId("harness-status")).toContainText('"progress":42');
+    await page.waitForTimeout(2_500);
+    const snap = (await page.evaluate(() => (window as any).__snap)) as Array<{ status: string; connected: string }>;
+    const sawConnectedWithProgress = snap.some((entry) => entry.status.includes('"progress":42') && entry.connected === "true");
+    expect(sawConnectedWithProgress).toBe(true);
   });
 
   test("a 401 from the status stream does not enter an uncontrolled reconnect loop", async ({ page }) => {
@@ -173,52 +162,61 @@ test.describe("SSE transport (authenticated fetch-stream)", () => {
     expect(await page.evaluate((key) => window.sessionStorage.getItem(key), TOKEN_STORAGE_KEY)).toBeNull();
   });
 
-  test("navigating away aborts the in-flight stream request", async ({ page }) => {
-    // Detecting this via page.on("requestfailed") / page.on("requestfinished")
-    // was tried across two CI rounds (runs #19 and #20) with two different
-    // artificial delays (5_000ms, then 500ms) and progressively wider
-    // observation windows (up to a combined ~5.5s). Both rounds'
-    // REQ_EVENTS_DEBUG evidence showed the exact same thing: the initial
-    // "request" event fires when page.route()'s handler intercepts the
-    // request, and then — regardless of how long the handler takes to
-    // resolve it, and regardless of how long the test keeps listening —
-    // absolutely no further request lifecycle event (not "requestfinished",
-    // not "requestfailed") is ever reported through page.on() for that
-    // page. That rules out a timing race; it means Playwright's page-level
-    // request-lifecycle events for a page.route()-intercepted request
-    // simply don't surface once the owning page has navigated to a new
-    // document, independent of when/whether the Node-side handler settles.
-    // That's a real, evidenced limitation of testing THIS way, not a bug in
-    // the app or a race to out-wait.
+  test("an auth-state change (logout) aborts the in-flight stream request", async ({ page }) => {
+    // This test used to simulate "navigating away" with page.goto("about:blank")
+    // — a hard, cross-document navigation. Three rounds of CI evidence
+    // (runs #19, #20, #21) tried three different ways to observe the
+    // outcome of that (page.on("requestfailed"), page.on("requestfinished"),
+    // and finally checking whether the mocked route handler's own
+    // route.fulfill() call throws once the page is gone) and all three
+    // came back empty or contradictory: no request-lifecycle event ever
+    // fires after such a navigation, and route.fulfill() resolves
+    // ("delivered") rather than throwing even when called well after the
+    // page has navigated away. That's not just a missing signal to find a
+    // fourth way around — it points at something more fundamental: a hard
+    // cross-document navigation destroys the whole JS realm synchronously,
+    // before React ever gets a chance to run this effect's cleanup
+    // function (the one that calls `abortController.abort()` in
+    // use-project-status.ts). So the original test was never actually
+    // exercising the app's own cleanup code at all — whatever happens to
+    // the in-flight request on a hard navigation is entirely the browser's
+    // own standard behavior (navigating away cancels a discarded
+    // document's pending fetches), independent of and unreachable by this
+    // app's code, and not something Playwright's request-mocking layer
+    // reports through any observable channel in this scenario.
     //
-    // So instead of asking the page "did you see a failed request", this
-    // asks the interception itself: route.fulfill() talks to the browser
-    // over CDP for a specific request on a specific frame, and Playwright
-    // throws from that call when the target frame/page it belongs to is
-    // gone (a real, empirically observable signal, unlike the page-level
-    // events above) — which is exactly the condition under test: the
-    // request must not be able to silently deliver its response into an
-    // app instance that no longer exists. A response that could still be
-    // fulfilled onto a live page after "navigating away" would mean the
-    // old document (and the connection using it) outlived the navigation,
-    // which is the actual bug this test guards against.
+    // The thing actually worth testing — that THIS APP'S cleanup code
+    // correctly aborts an in-flight status request rather than leaking it
+    // — does run, and is reliably observable, when the effect's own
+    // dependencies change within the SAME document. Logging out is the
+    // simplest real, already-existing trigger for that: it clears
+    // useAuthStore's `token` (see lib/auth/auth-store.ts's `logout`),
+    // which is a dependency of the effect in use-project-status.ts, so its
+    // cleanup runs (calling abortController.abort()) and, since `token` is
+    // now null, the effect body returns early instead of reconnecting.
+    // AuthGate also swaps HarnessContent out for AuthForm at the same
+    // time, unmounting the harness entirely — a completely ordinary,
+    // same-page teardown, which is exactly the case Playwright's request
+    // events are well-supported for (every other test in this file relies
+    // on them without issue).
     let requestStarted = false;
-    let fulfillOutcome: "delivered" | "threw" | undefined;
-    let fulfillError: string | undefined;
+    const failedUrls: string[] = [];
+    page.on("requestfailed", (request) => {
+      if (request.url().includes("/status")) failedUrls.push(request.url());
+    });
     await page.route("**/api/v1/projects/**/status", async (route) => {
       requestStarted = true;
-      // Long enough to reliably still be in-flight when the test navigates
-      // away (that happens within milliseconds of requestStarted flipping
-      // true), short enough that the test doesn't have to wait long to see
-      // the outcome.
-      await new Promise((resolve) => setTimeout(resolve, 500));
-      try {
-        await route.fulfill({ status: 200, contentType: "text/event-stream", body: "event: status\ndata: {}\n\n" });
-        fulfillOutcome = "delivered";
-      } catch (error) {
-        fulfillOutcome = "threw";
-        fulfillError = error instanceof Error ? error.message : String(error);
-      }
+      // Hold the response open well past when logout tears down the
+      // component, so an unaborted request would still be pending when we
+      // check. Same-page teardown doesn't have the observability problem
+      // the old cross-navigation version did, so this can safely be long.
+      await new Promise((resolve) => setTimeout(resolve, 5_000));
+      await route.fulfill({ status: 200, contentType: "text/event-stream", body: "event: status\ndata: {}\n\n" }).catch(() => {
+        // The request may already be gone by the time this resolves —
+        // that's fine, requestStarted/failedUrls already captured what we
+        // need. Swallow so this handler doesn't produce an unhandled
+        // rejection in the test process.
+      });
     });
 
     await signInAsAuthenticated(page);
@@ -229,11 +227,14 @@ test.describe("SSE transport (authenticated fetch-stream)", () => {
     // genuinely started rather than guessing with a fixed timeout (see the
     // identical race in the WebSocket tests below).
     await expect.poll(() => requestStarted).toBe(true);
-    await page.goto("about:blank");
 
-    await expect.poll(() => fulfillOutcome, { timeout: 4_000 }).toBe("threw");
-    // eslint-disable-next-line no-console
-    console.log("FULFILL_OUTCOME_DEBUG", fulfillOutcome, fulfillError);
+    await page.getByRole("button", { name: "登出" }).click();
+    // Confirms the logout itself actually completed (same signal
+    // auth-foundation.spec.ts's logout test uses), so a failure here can't
+    // be confused with the abort assertion below.
+    await expect(page.getByLabel("電子郵件")).toBeVisible();
+
+    await expect.poll(() => failedUrls.length, { timeout: 3_000 }).toBeGreaterThan(0);
   });
 });
 
