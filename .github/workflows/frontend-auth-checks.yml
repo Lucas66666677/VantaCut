@@ -26,7 +26,24 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     env:
-      NEXT_PUBLIC_API_URL: http://127.0.0.1:8000
+      # Deliberately the SAME origin the frontend itself is served from
+      # (127.0.0.1:3000), not a separate backend port. This job never talks
+      # to a real backend — every backend call in e2e/*.spec.ts is mocked via
+      # page.route() — and a cross-origin target here would make those calls
+      # genuine cross-origin fetches subject to real browser CORS/preflight
+      # enforcement (and this app's own next.config.js sets
+      # Cross-Origin-Embedder-Policy: require-corp for ffmpeg.wasm/
+      # SharedArrayBuffer support, which is even stricter about cross-origin
+      # loads). page.route().fulfill() mocks don't add CORS headers, so a
+      # cross-origin API URL here silently fails every mocked request (the
+      # browser blocks the response before the page ever sees it) without
+      # page.route() itself reporting an error — this was confirmed as the
+      # root cause of every project-status-transport.spec.ts failure in an
+      # earlier run of this workflow (NEXT_PUBLIC_API_URL pointed at
+      # 127.0.0.1:8000, nothing listens there in this job, and the mocked
+      # /auth/me response was blocked before AuthGate ever reached
+      # "authenticated"). Same-origin sidesteps CORS and COEP entirely.
+      NEXT_PUBLIC_API_URL: http://127.0.0.1:3000
     defaults:
       run:
         working-directory: frontend
@@ -67,10 +84,14 @@ jobs:
       # `next dev` and drive Playwright against it. The auth foundation and
       # project-status transport code under test (lib/auth/*,
       # features/auth/*, features/project-status/use-project-status.ts, and
-      # the Playwright-only harness at app/__test-harness__/project-status)
-      # has zero dependency on the broken adaptive-editor-workspace.tsx
-      # import chain, so this still gives real, meaningful pass/fail
-      # evidence for this PR's diff.
+      # the Playwright-only harnesses at app/__test-harness__/auth and
+      # app/__test-harness__/project-status) has zero dependency on the
+      # broken adaptive-editor-workspace.tsx import chain, so this still
+      # gives real, meaningful pass/fail evidence for this PR's diff. (The
+      # real /studio entry point still wraps StudioLaunchpad in AuthGate
+      # unchanged — the harness routes exist only because /studio itself
+      # cannot compile at all in this environment until that unrelated bug
+      # is fixed, independent of AuthGate.)
       - name: Install Playwright browser
         run: npx playwright install --with-deps chromium
       - name: Start the dev server
