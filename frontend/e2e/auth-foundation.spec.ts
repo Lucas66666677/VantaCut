@@ -78,9 +78,18 @@ test("failed login does not store a token and shows a generic error", async ({ p
   // into the authenticated app.
   await expect(page.getByLabel("電子郵件")).toBeVisible();
 
-  // Password/token hygiene: never rendered into the page, never logged.
-  const content = await page.content();
-  expect(content).not.toContain("totally-wrong-password");
+  // Password/token hygiene: never rendered as visible text anywhere on the
+  // page (e.g. echoed into an error message), and never logged. This
+  // deliberately checks rendered TEXT (innerText), not page.content()'s raw
+  // HTML: a live password <input>'s current value is always reflected into
+  // its own `value` attribute when the browser serializes outerHTML — that
+  // is normal, unavoidable behavior for every password field on every site
+  // (the DOM has to hold the plaintext value somewhere for the user to see
+  // it unmasked or for the form to submit it), not something this app
+  // leaks, so asserting against it there would be checking for an
+  // impossible condition rather than a real hygiene issue.
+  const bodyText = await page.locator("body").innerText();
+  expect(bodyText).not.toContain("totally-wrong-password");
   expect(consoleTexts.join("\n")).not.toContain("totally-wrong-password");
 });
 

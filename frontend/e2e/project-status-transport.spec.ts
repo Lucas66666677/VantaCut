@@ -106,7 +106,9 @@ test.describe("SSE transport (authenticated fetch-stream)", () => {
   });
 
   test("navigating away aborts the in-flight stream request", async ({ page }) => {
+    let requestStarted = false;
     await page.route("**/api/v1/projects/**/status", async (route) => {
+      requestStarted = true;
       // Hold the response open well past when the test navigates away, so
       // an unaborted request would still be pending when we check.
       await new Promise((resolve) => setTimeout(resolve, 5_000));
@@ -122,7 +124,12 @@ test.describe("SSE transport (authenticated fetch-stream)", () => {
 
     await signInAsAuthenticated(page);
     await page.goto(`/test-harness/project-status?projectId=${PROJECT_ID}&transport=sse`);
-    await page.waitForTimeout(200); // let the fetch actually start
+    // page.goto() resolves once navigation/load completes, not once the
+    // app's async auth-restore-then-connect chain has actually reached the
+    // point of issuing the fetch — so this polls for the request to have
+    // genuinely started rather than guessing with a fixed timeout (see the
+    // identical race in the WebSocket tests below).
+    await expect.poll(() => requestStarted).toBe(true);
     await page.goto("about:blank");
     await page.waitForTimeout(500);
 
@@ -197,12 +204,20 @@ test.describe("WebSocket transport (bearer subprotocol)", () => {
     await page.goto(`/test-harness/project-status?projectId=${PROJECT_ID}&transport=websocket`);
 
     await expect.poll(async () => page.evaluate(() => (window as any).__wsInstances.length)).toBeGreaterThanOrEqual(1);
-    await page.evaluate(() => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const ws = (window as any).__wsInstances[0];
-      ws.onopen?.({});
-      ws.onmessage?.({ data: JSON.stringify({ project_id: "p", progress: 77, stage: "render", status: "processing" }) });
-    });
+    await page.evaluate(
+      // The message payload's project_id must match the real PROJECT_ID the
+      // harness is subscribed to — project-status-store.ts's setProjectStatus
+      // keys the store by `status.project_id`, so a mismatched id (this used
+      // to be the placeholder "p") silently updates an unrelated store entry
+      // that the harness never reads, instead of the one it renders.
+      (projectId) => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const ws = (window as any).__wsInstances[0];
+        ws.onopen?.({});
+        ws.onmessage?.({ data: JSON.stringify({ project_id: projectId, progress: 77, stage: "render", status: "processing" }) });
+      },
+      PROJECT_ID,
+    );
 
     await expect(page.getByTestId("harness-status")).toContainText('"progress":77');
   });
