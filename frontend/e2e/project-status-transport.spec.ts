@@ -59,8 +59,17 @@ test.describe("SSE transport (authenticated fetch-stream)", () => {
 
   test("a 401 from the status stream does not enter an uncontrolled reconnect loop", async ({ page }) => {
     let requestCount = 0;
+    // TEMPORARY DIAGNOSTIC (to be removed): confirm whether a second request
+    // is a real reconnect (spaced ~1s+ apart, per the app's backoff) versus
+    // an artifact of something else (e.g. dev-mode double effect
+    // invocation), and surface any browser console activity (React/Next
+    // dev warnings) around the same window.
+    const requestTimestamps: number[] = [];
+    page.on("console", (msg) => console.log("PAGE_CONSOLE_DEBUG", msg.type(), msg.text()));
     await page.route("**/api/v1/projects/**/status", async (route) => {
       requestCount += 1;
+      requestTimestamps.push(Date.now());
+      console.log("SSE_401_REQUEST_DEBUG", requestCount, "at", Date.now());
       await route.fulfill({ status: 401, contentType: "application/json", body: JSON.stringify({ detail: "Could not validate credentials" }) });
     });
 
@@ -71,6 +80,7 @@ test.describe("SSE transport (authenticated fetch-stream)", () => {
     // Give the 1s/2s/4s... backoff schedule ample time to have fired at
     // least once more if the (buggy) behavior were "reconnect on 401".
     await page.waitForTimeout(3_000);
+    console.log("SSE_401_TIMESTAMPS_DEBUG", JSON.stringify(requestTimestamps));
     expect(requestCount).toBe(1);
     // A 401 also means the whole session is invalid, not just this stream —
     // the frontend should have dropped it.
@@ -141,6 +151,11 @@ test.describe("WebSocket transport (bearer subprotocol)", () => {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const calls = await page.evaluate(() => (window as any).__wsCalls);
+    // TEMPORARY DIAGNOSTIC (to be removed): dump every WebSocket() call this
+    // page made, to check whether something other than the app's own
+    // project-status connection (e.g. Next dev's HMR client) is also being
+    // captured by the global WebSocket mock installed in installMockWebSocket().
+    console.log("WS_CALLS_DEBUG", JSON.stringify(calls, null, 2));
     expect(calls.length).toBeGreaterThanOrEqual(1);
     expect(calls[0].protocols).toEqual(["bearer", TEST_TOKEN]);
     expect(calls[0].url).not.toContain(TEST_TOKEN);
