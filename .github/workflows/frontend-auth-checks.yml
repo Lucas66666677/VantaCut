@@ -1,0 +1,134 @@
+name: Frontend auth foundation checks
+
+# Scoped to this stacked PR's own diff (frontend auth foundation: token
+# storage, auth store/UI, authenticated fetch helper, and the project-status
+# SSE/WebSocket transport rewrite). Deliberately separate from the existing,
+# unrelated `render-quality.yml` / render-contract job (a much heavier
+# full-stack docker-compose pipeline with a pre-existing, already-documented
+# baseline failure — see artifacts/service-readiness/deployment-execution-final.md).
+# This workflow gives real CI evidence (typecheck/build/tests) for the
+# frontend auth code specifically, self-contained and fast, without touching
+# or depending on that unrelated pipeline.
+
+on:
+  pull_request:
+    paths:
+      - "frontend/**"
+      - ".github/workflows/frontend-auth-checks.yml"
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  frontend-auth-checks:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      # Deliberately the SAME origin the frontend itself is served from
+      # (127.0.0.1:3000), not a separate backend port. This job never talks
+      # to a real backend — every backend call in e2e/*.spec.ts is mocked via
+      # page.route() — and a cross-origin target here would make those calls
+      # genuine cross-origin fetches subject to real browser CORS/preflight
+      # enforcement (and this app's own next.config.js sets
+      # Cross-Origin-Embedder-Policy: require-corp for ffmpeg.wasm/
+      # SharedArrayBuffer support, which is even stricter about cross-origin
+      # loads). page.route().fulfill() mocks don't add CORS headers, so a
+      # cross-origin API URL here silently fails every mocked request (the
+      # browser blocks the response before the page ever sees it) without
+      # page.route() itself reporting an error. This was a real, independent
+      # bug (NEXT_PUBLIC_API_URL originally pointed at 127.0.0.1:8000,
+      # nothing listens there in this job) — though it turned out to be
+      # masked by a separate routing bug (see app/test-harness/*/page.tsx's
+      # doc comments: the harness routes 404'd entirely for unrelated
+      # reasons, so this CORS issue was never actually exercised until that
+      # was fixed too). Same-origin sidesteps CORS and COEP entirely and
+      # remains correct regardless.
+      NEXT_PUBLIC_API_URL: http://127.0.0.1:3000
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+      # No "Lint" step: this repo has no ESLint config or `eslint` dependency
+      # anywhere (verified — not something this PR's scope introduced or
+      # removed), so `npm run lint` (`next lint`) has nothing to run against
+      # and would fail on repo-wide tooling absence unrelated to this diff.
+      #
+      # No whole-project "Typecheck" (`tsc --noEmit`) or "next build" step
+      # either, and deliberately so: this repo already has a pre-existing,
+      # unrelated broken import in
+      # frontend/features/workspace/adaptive-editor-workspace.tsx (it imports
+      # "@/features/media/local-media-bin" and
+      # "@/features/media/semantic-media-bin", neither of which has ever
+      # existed anywhere in this repo's git history — confirmed via `git log
+      # --all` and via `git show` against this PR's base branch, i.e. it
+      # predates this PR entirely). A project-wide `tsc --noEmit` or `next
+      # build` type-checks/compiles every route up front and would always
+      # fail on that unrelated file, and it cannot be scoped to exclude just
+      # that file without also excluding this PR's own app/studio/page.tsx
+      # (which imports the same broken chain transitively through the studio
+      # route tree). Fixing that pre-existing bug is out of scope for this
+      # PR (it would mean fabricating two unrelated media-bin components from
+      # scratch). This repo's own established real-world pattern
+      # (docker-compose.yml's frontend service, and the existing
+      # render-quality.yml CI job) has only ever run this app with `next dev`
+      # — which compiles/type-checks lazily, per visited route — never a full
+      # production build. We follow that same established pattern here: run
+      # `next dev` and drive Playwright against it. The auth foundation and
+      # project-status transport code under test (lib/auth/*,
+      # features/auth/*, features/project-status/use-project-status.ts, and
+      # the Playwright-only harnesses at app/test-harness/auth and
+      # app/test-harness/project-status) has zero dependency on the
+      # broken adaptive-editor-workspace.tsx import chain, so this still
+      # gives real, meaningful pass/fail evidence for this PR's diff. (The
+      # real /studio entry point still wraps StudioLaunchpad in AuthGate
+      # unchanged — the harness routes exist only because /studio itself
+      # cannot compile at all in this environment until that unrelated bug
+      # is fixed, independent of AuthGate.)
+      # Browser binary only, no `--with-deps` apt-get install: two
+      # consecutive runs of this workflow hung indefinitely (still no output
+      # after 9+ minutes, well past the point a healthy `apt-get install`
+      # would finish) inside `--with-deps`'s system-package installation on
+      # this ubuntu-24.04 runner, after successfully fetching all apt index
+      # files (Ign:/Get: lines for archive.ubuntu.com all completed; the
+      # subsequent `apt-get install` of chromium's shared-library
+      # dependencies is what never produced further output) — an
+      # infrastructure/mirror issue, not something introduced by this PR.
+      # GitHub's hosted ubuntu-24.04 runner image already ships the shared
+      # libraries headless Chromium needs for the common case; if that turns
+      # out incomplete here, the browser launch fails with a specific
+      # missing-library error in the next step instead of hanging silently.
+      - name: Install Playwright browser
+        run: npx playwright install chromium
+      - name: Start the dev server
+        run: |
+          npm run dev -- --hostname 0.0.0.0 --port 3000 > /tmp/next-dev.log 2>&1 &
+          echo $! > /tmp/next-dev.pid
+          for attempt in $(seq 1 60); do
+            curl --fail --silent http://127.0.0.1:3000/ > /dev/null && exit 0
+            sleep 1
+          done
+          echo "frontend server did not become ready in time" >&2
+          exit 1
+      - name: Run frontend auth foundation tests
+        env:
+          PLAYWRIGHT_BASE_URL: http://127.0.0.1:3000
+        run: npx playwright test e2e/auth-foundation.spec.ts e2e/project-status-transport.spec.ts
+      - name: Stop the dev server
+        if: always()
+        run: kill "$(cat /tmp/next-dev.pid)" 2>/dev/null || true
+      - name: Upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-auth-checks-playwright-report
+          path: frontend/playwright-report/
