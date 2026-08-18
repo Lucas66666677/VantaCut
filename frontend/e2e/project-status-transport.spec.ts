@@ -1,4 +1,4 @@
-import { expect, test, type Page, type Request } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
 /**
  * Focused security-regression coverage for the SSE/WebSocket transport
@@ -73,6 +73,26 @@ test.describe("SSE transport (authenticated fetch-stream)", () => {
     // actually still alive when read back. addInitScript re-arms itself on
     // every subsequent navigation of this page, so it's present on the
     // document we actually care about.
+    //
+    // Observing `document.querySelector("main")` (round 2, CI run #20) was
+    // ALSO wrong, for a different reason: features/auth/auth-gate.tsx's
+    // `status === "loading"` branch renders its own, unrelated
+    // `<main className="grid min-h-screen ...">正在確認登入狀態…</main>` —
+    // a completely different element from the harness's own <main>. The
+    // diagnostic's rAF-poll found THAT loading <main> first (it exists
+    // before auth resolves), bound the MutationObserver to it, and then
+    // AuthGate unmounts/replaces that entire subtree once auth resolves
+    // (swapping to {children} + LogoutControl) — so the observed node is
+    // detached from the live document before the harness's own content
+    // (and its testid elements) ever exists, and the observer never fires
+    // again. Confirmed by CI run #20's evidence: a single snapshot at
+    // t=37ms with both fields as empty string (querySelector for the
+    // testids found nothing yet — not even the expected initial
+    // "false"/"null" render), then silence. Observing `document.body`
+    // instead sidesteps this entirely: body itself is never replaced
+    // across AuthGate's loading -> unauthenticated/authenticated
+    // transitions, only its descendants are swapped, and subtree:true
+    // still catches mutations anywhere underneath it.
     await page.addInitScript(() => {
       const w = window as any;
       w.__snap = [] as Array<{ t: number; status: string; connected: string }>;
@@ -83,10 +103,9 @@ test.describe("SSE transport (authenticated fetch-stream)", () => {
         w.__snap.push({ t: Math.round(performance.now() - start), status, connected });
       };
       const attach = () => {
-        const target = document.querySelector("main");
-        if (target) {
+        if (document.body) {
           record();
-          new MutationObserver(record).observe(target, { childList: true, characterData: true, subtree: true });
+          new MutationObserver(record).observe(document.body, { childList: true, characterData: true, subtree: true });
         } else {
           requestAnimationFrame(attach);
         }
@@ -155,55 +174,51 @@ test.describe("SSE transport (authenticated fetch-stream)", () => {
   });
 
   test("navigating away aborts the in-flight stream request", async ({ page }) => {
+    // Detecting this via page.on("requestfailed") / page.on("requestfinished")
+    // was tried across two CI rounds (runs #19 and #20) with two different
+    // artificial delays (5_000ms, then 500ms) and progressively wider
+    // observation windows (up to a combined ~5.5s). Both rounds'
+    // REQ_EVENTS_DEBUG evidence showed the exact same thing: the initial
+    // "request" event fires when page.route()'s handler intercepts the
+    // request, and then — regardless of how long the handler takes to
+    // resolve it, and regardless of how long the test keeps listening —
+    // absolutely no further request lifecycle event (not "requestfinished",
+    // not "requestfailed") is ever reported through page.on() for that
+    // page. That rules out a timing race; it means Playwright's page-level
+    // request-lifecycle events for a page.route()-intercepted request
+    // simply don't surface once the owning page has navigated to a new
+    // document, independent of when/whether the Node-side handler settles.
+    // That's a real, evidenced limitation of testing THIS way, not a bug in
+    // the app or a race to out-wait.
+    //
+    // So instead of asking the page "did you see a failed request", this
+    // asks the interception itself: route.fulfill() talks to the browser
+    // over CDP for a specific request on a specific frame, and Playwright
+    // throws from that call when the target frame/page it belongs to is
+    // gone (a real, empirically observable signal, unlike the page-level
+    // events above) — which is exactly the condition under test: the
+    // request must not be able to silently deliver its response into an
+    // app instance that no longer exists. A response that could still be
+    // fulfilled onto a live page after "navigating away" would mean the
+    // old document (and the connection using it) outlived the navigation,
+    // which is the actual bug this test guards against.
     let requestStarted = false;
+    let fulfillOutcome: "delivered" | "threw" | undefined;
+    let fulfillError: string | undefined;
     await page.route("**/api/v1/projects/**/status", async (route) => {
       requestStarted = true;
-      // Hold the response open past when the test navigates away, so an
-      // unaborted request would still be pending when we check — but NOT
-      // longer than the test's own observation window below. CI run #19's
-      // REQ_EVENTS_DEBUG evidence showed the request being intercepted
-      // (the "request" event) and then literally nothing else — no
-      // requestfinished, no requestfailed — for the full 3s the test was
-      // watching, because this delay used to be 5_000ms: the test stopped
-      // watching before this handler ever got around to calling
-      // route.fulfill()/erroring, so the outcome was structurally
-      // unobservable regardless of what the browser actually does on
-      // navigation. A short delay here (well under the poll timeout below)
-      // guarantees the request is still in-flight at navigation time
-      // (navigation happens within milliseconds of requestStarted flipping)
-      // while leaving the observation window enough room to actually see
-      // what happens once this handler resolves.
+      // Long enough to reliably still be in-flight when the test navigates
+      // away (that happens within milliseconds of requestStarted flipping
+      // true), short enough that the test doesn't have to wait long to see
+      // the outcome.
       await new Promise((resolve) => setTimeout(resolve, 500));
-      await route.fulfill({ status: 200, contentType: "text/event-stream", body: "event: status\ndata: {}\n\n" });
-    });
-
-    // Match any failed request for this URL, not just ones whose errorText
-    // contains "ABORTED": Chromium's reported reason for a request torn
-    // down by cross-document navigation isn't guaranteed to be that exact
-    // string, and the thing actually under test is narrower and more
-    // important than the specific wording — that the request doesn't
-    // silently outlive the navigation.
-    const failedUrls: string[] = [];
-    // TEMPORARY DIAGNOSTIC (not a real assertion): log every request
-    // lifecycle event, not just filtered "requestfailed" ones, with
-    // timestamps, so CI evidence can show whether the browser ever reports
-    // the in-flight /status request as failed/aborted at all after
-    // cross-document navigation, or whether it's a page/listener lifecycle
-    // issue instead.
-    const eventLog: string[] = [];
-    const diagStart = Date.now();
-    const logEvt = (label: string, request: Request) => {
-      eventLog.push(`${Date.now() - diagStart}ms ${label} ${request.url()} failure=${request.failure()?.errorText ?? "none"}`);
-    };
-    page.on("requestfailed", (request) => {
-      logEvt("requestfailed", request);
-      if (request.url().includes("/status")) {
-        failedUrls.push(request.url());
+      try {
+        await route.fulfill({ status: 200, contentType: "text/event-stream", body: "event: status\ndata: {}\n\n" });
+        fulfillOutcome = "delivered";
+      } catch (error) {
+        fulfillOutcome = "threw";
+        fulfillError = error instanceof Error ? error.message : String(error);
       }
-    });
-    page.on("requestfinished", (request) => logEvt("requestfinished", request));
-    page.on("request", (request) => {
-      if (request.url().includes("/status")) logEvt("request", request);
     });
 
     await signInAsAuthenticated(page);
@@ -215,20 +230,10 @@ test.describe("SSE transport (authenticated fetch-stream)", () => {
     // identical race in the WebSocket tests below).
     await expect.poll(() => requestStarted).toBe(true);
     await page.goto("about:blank");
-    // Give the diagnostic log time to accumulate any late-arriving events
-    // before we dump it, independent of the real assertion below.
-    await page.waitForTimeout(1_500).catch(() => {});
-    // eslint-disable-next-line no-console
-    console.log("REQ_EVENTS_DEBUG", JSON.stringify(eventLog));
 
-    // Give the requestfailed event more room to surface than a flat 500ms:
-    // it has to round-trip through CDP for a request tied to a document
-    // that cross-navigation is simultaneously tearing down, which is a
-    // slower, less deterministic path than an ordinary same-page failure —
-    // and, per the comment on the route handler above, this window must
-    // comfortably exceed that handler's own artificial delay (500ms) or the
-    // outcome can never be observed at all regardless of browser behavior.
-    await expect.poll(() => failedUrls.length, { timeout: 4_000 }).toBeGreaterThan(0);
+    await expect.poll(() => fulfillOutcome, { timeout: 4_000 }).toBe("threw");
+    // eslint-disable-next-line no-console
+    console.log("FULFILL_OUTCOME_DEBUG", fulfillOutcome, fulfillError);
   });
 });
 
