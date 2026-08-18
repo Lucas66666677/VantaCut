@@ -4,7 +4,7 @@ import { expect, test, type Page } from "@playwright/test";
  * Focused security-regression coverage for the SSE/WebSocket transport
  * rewrite in features/project-status/use-project-status.ts, driven through
  * the real AuthGate/auth-store integration (not a bypass of it) against the
- * Playwright-only harness page at app/__test-harness__/project-status —
+ * Playwright-only harness page at app/test-harness/project-status —
  * see that file for why a harness page exists at all.
  *
  * The WebSocket half is tested with a small in-page mock WebSocket class
@@ -23,7 +23,7 @@ async function signInAsAuthenticated(page: Page): Promise<void> {
   await page.route("**/api/v1/auth/me", async (route) => {
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(TEST_USER) });
   });
-  await page.goto("/__test-harness__/project-status");
+  await page.goto("/test-harness/project-status");
   await page.evaluate((args) => window.sessionStorage.setItem(args.key, args.token), { key: TOKEN_STORAGE_KEY, token: TEST_TOKEN });
 }
 
@@ -38,7 +38,7 @@ test.describe("SSE transport (authenticated fetch-stream)", () => {
     });
 
     await signInAsAuthenticated(page);
-    await page.goto(`/__test-harness__/project-status?projectId=${PROJECT_ID}&transport=sse`);
+    await page.goto(`/test-harness/project-status?projectId=${PROJECT_ID}&transport=sse`);
 
     await expect.poll(() => seenAuthHeader).toBe(`Bearer ${TEST_TOKEN}`);
     expect(seenUrl).not.toContain(TEST_TOKEN);
@@ -51,7 +51,7 @@ test.describe("SSE transport (authenticated fetch-stream)", () => {
     });
 
     await signInAsAuthenticated(page);
-    await page.goto(`/__test-harness__/project-status?projectId=${PROJECT_ID}&transport=sse`);
+    await page.goto(`/test-harness/project-status?projectId=${PROJECT_ID}&transport=sse`);
 
     await expect(page.getByTestId("harness-status")).toContainText('"progress":42');
     await expect(page.getByTestId("harness-connected")).toHaveText("true");
@@ -65,7 +65,7 @@ test.describe("SSE transport (authenticated fetch-stream)", () => {
     });
 
     await signInAsAuthenticated(page);
-    await page.goto(`/__test-harness__/project-status?projectId=${PROJECT_ID}&transport=sse`);
+    await page.goto(`/test-harness/project-status?projectId=${PROJECT_ID}&transport=sse`);
 
     await expect.poll(() => requestCount).toBeGreaterThanOrEqual(1);
     // Give the 1s/2s/4s... backoff schedule ample time to have fired at
@@ -93,7 +93,7 @@ test.describe("SSE transport (authenticated fetch-stream)", () => {
     });
 
     await signInAsAuthenticated(page);
-    await page.goto(`/__test-harness__/project-status?projectId=${PROJECT_ID}&transport=sse`);
+    await page.goto(`/test-harness/project-status?projectId=${PROJECT_ID}&transport=sse`);
     await page.waitForTimeout(200); // let the fetch actually start
     await page.goto("about:blank");
     await page.waitForTimeout(500);
@@ -137,7 +137,7 @@ test.describe("WebSocket transport (bearer subprotocol)", () => {
   test("WebSocket is constructed with the bearer subprotocol and no token in the URL", async ({ page }) => {
     await installMockWebSocket(page);
     await signInAsAuthenticated(page);
-    await page.goto(`/__test-harness__/project-status?projectId=${PROJECT_ID}&transport=websocket`);
+    await page.goto(`/test-harness/project-status?projectId=${PROJECT_ID}&transport=websocket`);
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const calls = await page.evaluate(() => (window as any).__wsCalls);
@@ -149,7 +149,7 @@ test.describe("WebSocket transport (bearer subprotocol)", () => {
   test("an authenticated status message is processed once the socket opens", async ({ page }) => {
     await installMockWebSocket(page);
     await signInAsAuthenticated(page);
-    await page.goto(`/__test-harness__/project-status?projectId=${PROJECT_ID}&transport=websocket`);
+    await page.goto(`/test-harness/project-status?projectId=${PROJECT_ID}&transport=websocket`);
 
     await page.evaluate(() => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -164,7 +164,7 @@ test.describe("WebSocket transport (bearer subprotocol)", () => {
   test("a 1008 close (auth/ownership rejection) does not trigger an uncontrolled reconnect loop", async ({ page }) => {
     await installMockWebSocket(page);
     await signInAsAuthenticated(page);
-    await page.goto(`/__test-harness__/project-status?projectId=${PROJECT_ID}&transport=websocket`);
+    await page.goto(`/test-harness/project-status?projectId=${PROJECT_ID}&transport=websocket`);
 
     await page.evaluate(() => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -183,7 +183,7 @@ test.describe("WebSocket transport (bearer subprotocol)", () => {
   test("a non-auth close (e.g. transient 1006) does reconnect", async ({ page }) => {
     await installMockWebSocket(page);
     await signInAsAuthenticated(page);
-    await page.goto(`/__test-harness__/project-status?projectId=${PROJECT_ID}&transport=websocket`);
+    await page.goto(`/test-harness/project-status?projectId=${PROJECT_ID}&transport=websocket`);
 
     await page.evaluate(() => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any

@@ -8,7 +8,7 @@ import { expect, test, type Page } from "@playwright/test";
  * e2e/project-status-transport.spec.ts for the SSE/WebSocket transport
  * coverage.
  *
- * Drives AuthGate through app/__test-harness__/auth (not /studio): /studio's
+ * Drives AuthGate through app/test-harness/auth (not /studio): /studio's
  * only content, features/onboarding/studio-launchpad.tsx, statically
  * imports features/workspace/adaptive-editor-workspace.tsx, which in turn
  * imports two modules that have never existed anywhere in this repo's git
@@ -38,7 +38,7 @@ test("successful login stores the access token in sessionStorage and reaches the
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(TEST_USER) });
   });
 
-  await page.goto("/__test-harness__/auth");
+  await page.goto("/test-harness/auth");
   await expect(page.getByLabel("電子郵件")).toBeVisible();
 
   await page.getByLabel("電子郵件").fill(TEST_USER.email);
@@ -59,7 +59,7 @@ test("failed login does not store a token and shows a generic error", async ({ p
   const consoleTexts: string[] = [];
   page.on("console", (message) => consoleTexts.push(message.text()));
 
-  await page.goto("/__test-harness__/auth");
+  await page.goto("/test-harness/auth");
   await page.getByLabel("電子郵件").fill("nope@example.com");
   await page.getByLabel("密碼").fill("totally-wrong-password");
   await page.getByRole("button", { name: "登入" }).click();
@@ -84,7 +84,7 @@ test("logout clears the stored token and returns to the sign-in screen", async (
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(TEST_USER) });
   });
 
-  await page.goto("/__test-harness__/auth");
+  await page.goto("/test-harness/auth");
   await page.getByLabel("電子郵件").fill(TEST_USER.email);
   await page.getByLabel("密碼").fill("correct-horse-battery-staple");
   await page.getByRole("button", { name: "登入" }).click();
@@ -104,7 +104,7 @@ test("a stored token is validated against /auth/me and restores the session on r
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(TEST_USER) });
   });
 
-  await page.goto("/__test-harness__/auth");
+  await page.goto("/test-harness/auth");
   await expect(page.getByLabel("電子郵件")).toBeVisible();
   await page.evaluate((args) => window.sessionStorage.setItem(args.key, args.token), { key: TOKEN_STORAGE_KEY, token: TEST_TOKEN });
 
@@ -119,7 +119,7 @@ test("an invalid or expired /auth/me response clears the stored token", async ({
     await route.fulfill({ status: 401, contentType: "application/json", body: JSON.stringify({ detail: "Could not validate credentials" }) });
   });
 
-  await page.goto("/__test-harness__/auth");
+  await page.goto("/test-harness/auth");
   await page.evaluate((args) => window.sessionStorage.setItem(args.key, args.token), { key: TOKEN_STORAGE_KEY, token: "an-expired-or-garbage-token" });
 
   await page.reload();
