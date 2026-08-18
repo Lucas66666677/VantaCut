@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page, type Request } from "@playwright/test";
 
 /**
  * Focused security-regression coverage for the SSE/WebSocket transport
@@ -58,6 +58,26 @@ test.describe("SSE transport (authenticated fetch-stream)", () => {
       await route.fulfill({ status: 200, contentType: "text/event-stream", body: `event: status\ndata: ${payload}\n\n` });
     });
 
+    // TEMPORARY DIAGNOSTIC (not a real assertion): records every DOM
+    // mutation of the two harness testids with a timestamp, so CI evidence
+    // can show the actual sequence/timing of "connected" vs "status"
+    // updates instead of guessing why a 5s waitForFunction poll times out.
+    await page.evaluate(() => {
+      const w = window as any;
+      w.__snap = [] as Array<{ t: number; status: string; connected: string }>;
+      const start = performance.now();
+      const record = () => {
+        const status = document.querySelector('[data-testid="harness-status"]')?.textContent ?? "";
+        const connected = document.querySelector('[data-testid="harness-connected"]')?.textContent ?? "";
+        w.__snap.push({ t: Math.round(performance.now() - start), status, connected });
+      };
+      record();
+      const observer = new MutationObserver(record);
+      const target = document.querySelector("main");
+      if (target) observer.observe(target, { childList: true, characterData: true, subtree: true });
+      w.__snapObserver = observer;
+    });
+
     await signInAsAuthenticated(page);
     await page.goto(`/test-harness/project-status?projectId=${PROJECT_ID}&transport=sse`);
 
@@ -81,15 +101,21 @@ test.describe("SSE transport (authenticated fetch-stream)", () => {
     // third argument to actually apply; passing the options object as the
     // second argument silently discards it as an unused `arg` and falls
     // through to the test's full default timeout instead.
-    await page.waitForFunction(
-      () => {
-        const status = document.querySelector('[data-testid="harness-status"]')?.textContent ?? "";
-        const connected = document.querySelector('[data-testid="harness-connected"]')?.textContent ?? "";
-        return status.includes('"progress":42') && connected === "true";
-      },
-      undefined,
-      { timeout: 5_000 },
-    );
+    try {
+      await page.waitForFunction(
+        () => {
+          const status = document.querySelector('[data-testid="harness-status"]')?.textContent ?? "";
+          const connected = document.querySelector('[data-testid="harness-connected"]')?.textContent ?? "";
+          return status.includes('"progress":42') && connected === "true";
+        },
+        undefined,
+        { timeout: 5_000 },
+      );
+    } finally {
+      const snap = await page.evaluate(() => (window as any).__snap);
+      // eslint-disable-next-line no-console
+      console.log("SNAP_DEBUG", JSON.stringify(snap));
+    }
   });
 
   test("a 401 from the status stream does not enter an uncontrolled reconnect loop", async ({ page }) => {
@@ -129,10 +155,26 @@ test.describe("SSE transport (authenticated fetch-stream)", () => {
     // important than the specific wording — that the request doesn't
     // silently outlive the navigation.
     const failedUrls: string[] = [];
+    // TEMPORARY DIAGNOSTIC (not a real assertion): log every request
+    // lifecycle event, not just filtered "requestfailed" ones, with
+    // timestamps, so CI evidence can show whether the browser ever reports
+    // the in-flight /status request as failed/aborted at all after
+    // cross-document navigation, or whether it's a page/listener lifecycle
+    // issue instead.
+    const eventLog: string[] = [];
+    const diagStart = Date.now();
+    const logEvt = (label: string, request: Request) => {
+      eventLog.push(`${Date.now() - diagStart}ms ${label} ${request.url()} failure=${request.failure()?.errorText ?? "none"}`);
+    };
     page.on("requestfailed", (request) => {
+      logEvt("requestfailed", request);
       if (request.url().includes("/status")) {
         failedUrls.push(request.url());
       }
+    });
+    page.on("requestfinished", (request) => logEvt("requestfinished", request));
+    page.on("request", (request) => {
+      if (request.url().includes("/status")) logEvt("request", request);
     });
 
     await signInAsAuthenticated(page);
@@ -144,6 +186,11 @@ test.describe("SSE transport (authenticated fetch-stream)", () => {
     // identical race in the WebSocket tests below).
     await expect.poll(() => requestStarted).toBe(true);
     await page.goto("about:blank");
+    // Give the diagnostic log time to accumulate any late-arriving events
+    // before we dump it, independent of the real assertion below.
+    await page.waitForTimeout(3_000).catch(() => {});
+    // eslint-disable-next-line no-console
+    console.log("REQ_EVENTS_DEBUG", JSON.stringify(eventLog));
 
     // Give the requestfailed event more room to surface than a flat 500ms:
     // it has to round-trip through CDP for a request tied to a document
