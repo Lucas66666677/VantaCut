@@ -20,11 +20,18 @@ test_project_status.py already hit and had to work around for its
 non-inferred assertion: an unauthorized caller never calls `hub.join(...)`,
 so it never starts a pub/sub subscription or receives a single buffered Yjs
 update, regardless of anything else in this test's assertions.
+
+CI evidence note: test_ws_non_owner_review_participant_accepted sets
+ReviewParticipant.created_at/updated_at explicitly rather than relying on
+the ORM's declared server_default — see that test's docstring for the
+pre-existing, production-affecting migration bug this works around without
+touching the migration (out of scope for this batch).
 """
 from __future__ import annotations
 
 import importlib.util
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -197,12 +204,35 @@ def test_ws_non_owner_review_participant_accepted(app_client, db_session, hub):
     a real, pre-existing non-owner access grant (ReviewParticipant) must
     still be able to join. If this test is ever changed to expect rejection,
     that is a product-semantics change, not a security hardening — see
-    _authorize_timeline_access's docstring for why REVIEWER is included."""
+    _authorize_timeline_access's docstring for why REVIEWER is included.
+
+    created_at/updated_at are set explicitly here, not left to the ORM's
+    declared `server_default=func.now()`, because CI proved that default
+    isn't actually wired up for this table: migration
+    0012_add_review_approval.py's `review_participants` DDL declares both
+    columns `nullable=False` with no `server_default` (unlike
+    0001_initial.py's tables, which all set `server_default=sa.func.now()`
+    correctly). That's a genuine, pre-existing schema bug — the exact same
+    unadorned `ReviewParticipant(timeline_id=..., user_id=...)` construction
+    already exists in production at app/api/v1/reviews.py:133, so this
+    isn't something Batch 2A introduced and isn't this route's bug to fix;
+    it's reported as a discovered limitation. Setting timestamps explicitly
+    here is the smallest way to exercise the real ReviewParticipant access
+    grant without a migration change, which is out of scope for this batch."""
     owner = _make_user(db_session)
     project = _make_project(db_session, owner)
     timeline = _make_timeline(db_session, project)
     reviewer = _make_user(db_session)
-    db_session.add(ReviewParticipant(timeline_id=timeline.id, user_id=reviewer.id, role=ReviewRole.REVIEWER))
+    now = datetime.now(timezone.utc)
+    db_session.add(
+        ReviewParticipant(
+            timeline_id=timeline.id,
+            user_id=reviewer.id,
+            role=ReviewRole.REVIEWER,
+            created_at=now,
+            updated_at=now,
+        )
+    )
     db_session.flush()
     token = create_access_token(reviewer.id)
 
