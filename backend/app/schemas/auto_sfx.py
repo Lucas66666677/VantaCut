@@ -4,7 +4,6 @@ from pydantic import BaseModel, Field
 
 
 class AutoSFXRequest(BaseModel):
-    user_id: UUID
     pop_asset_id: UUID | None = None
     whoosh_asset_id: UUID | None = None
     impact_asset_id: UUID | None = None

@@ -4,7 +4,6 @@ from pydantic import BaseModel
 
 
 class RoughCutRequest(BaseModel):
-    user_id: UUID
     media_asset_id: UUID
 
 
