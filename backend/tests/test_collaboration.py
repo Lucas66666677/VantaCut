@@ -24,18 +24,21 @@ non-inferred assertion: an unauthorized caller never calls `hub.join(...)`,
 so it never starts a pub/sub subscription or receives a single buffered Yjs
 update, regardless of anything else in this test's assertions.
 
-CI evidence note: test_ws_non_owner_review_participant_rejected still sets
-ReviewParticipant.created_at/updated_at explicitly rather than relying on
-the ORM's declared server_default, purely to construct the row at all —
-see that test's docstring for the pre-existing, production-affecting
-migration bug this works around without touching the migration here (fixed
-separately by a stacked schema migration; see that PR).
+CI evidence note: earlier versions of test_ws_non_owner_review_participant_rejected
+(then named ...accepted) and test_ws_approver_review_participant_rejected had
+to set ReviewParticipant.created_at/updated_at explicitly to work around a
+pre-existing schema bug (review_participants' server_default was declared on
+the ORM model but never installed in the actual migration DDL). That bug is
+now fixed by a real, additive migration —
+migrations/versions/0030_fix_review_participants_timestamp_defaults.py, with
+its own regression coverage in tests/test_review_participant_schema.py — so
+both tests now construct ReviewParticipant the same way production code does
+(app/api/v1/reviews.py's add_review_participant), with no workaround.
 """
 from __future__ import annotations
 
 import importlib.util
 import uuid
-from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -217,27 +220,19 @@ def test_ws_non_owner_review_participant_rejected(app_client, db_session, hub):
     evidenced product decision (e.g. a real, designed reviewer-collaboration
     feature), not a reversion to this incorrect assumption.
 
-    created_at/updated_at are still set explicitly here, not left to the
-    ORM's declared `server_default=func.now()`, purely to construct the row
-    at all: migration 0012_add_review_approval.py's `review_participants`
-    DDL declares both columns `nullable=False` with no `server_default`
-    (unlike 0001_initial.py's tables, which all set
-    `server_default=sa.func.now()` correctly) — a genuine, pre-existing
-    schema bug, fixed separately by a stacked migration PR rather than here."""
+    created_at/updated_at are no longer set explicitly here (an earlier
+    version of this test had to, working around a since-fixed schema bug —
+    see migrations/versions/0030_fix_review_participants_timestamp_defaults.py
+    and tests/test_review_participant_schema.py, which prove the real
+    production insert pattern now succeeds directly). This test now
+    constructs ReviewParticipant exactly the way production code does
+    (app/api/v1/reviews.py's add_review_participant), so it also implicitly
+    exercises that the schema fix didn't regress this path."""
     owner = _make_user(db_session)
     project = _make_project(db_session, owner)
     timeline = _make_timeline(db_session, project)
     reviewer = _make_user(db_session)
-    now = datetime.now(timezone.utc)
-    db_session.add(
-        ReviewParticipant(
-            timeline_id=timeline.id,
-            user_id=reviewer.id,
-            role=ReviewRole.REVIEWER,
-            created_at=now,
-            updated_at=now,
-        )
-    )
+    db_session.add(ReviewParticipant(timeline_id=timeline.id, user_id=reviewer.id, role=ReviewRole.REVIEWER))
     db_session.flush()
     token = create_access_token(reviewer.id)
 
@@ -258,16 +253,7 @@ def test_ws_approver_review_participant_rejected(app_client, db_session, hub):
     project = _make_project(db_session, owner)
     timeline = _make_timeline(db_session, project)
     approver = _make_user(db_session)
-    now = datetime.now(timezone.utc)
-    db_session.add(
-        ReviewParticipant(
-            timeline_id=timeline.id,
-            user_id=approver.id,
-            role=ReviewRole.APPROVER,
-            created_at=now,
-            updated_at=now,
-        )
-    )
+    db_session.add(ReviewParticipant(timeline_id=timeline.id, user_id=approver.id, role=ReviewRole.APPROVER))
     db_session.flush()
     token = create_access_token(approver.id)
 
