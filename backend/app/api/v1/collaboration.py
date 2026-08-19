@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.v1.project_status import _authenticate_websocket
+from app.auth.websocket import authenticate_websocket_bearer
 from app.db.session import get_db
 from app.models.entities import ReviewParticipant, Timeline, User
 from app.services.collaboration import collaboration_hub
@@ -68,11 +68,12 @@ async def collaborate_on_timeline(
     starts a Redis pub/sub subscription and replays buffered updates to the
     new client) — see `_authorize_timeline_access` for the access model.
     Reuses the same `Sec-WebSocket-Protocol` bearer convention as
-    project_status.py's WebSocket (browsers cannot set a custom
-    Authorization header on the WebSocket constructor); the token is never
-    logged.
+    project_status.py's WebSocket, via the shared
+    app.auth.websocket.authenticate_websocket_bearer helper (browsers
+    cannot set a custom Authorization header on the WebSocket constructor);
+    the token is never logged.
     """
-    user = await _authenticate_websocket(websocket, db)
+    user = await authenticate_websocket_bearer(websocket, db)
     if user is None:
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
         return

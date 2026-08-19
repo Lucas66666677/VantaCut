@@ -10,8 +10,8 @@ from redis import asyncio as redis_async
 from sqlalchemy.orm import Session
 
 from app.auth.dependencies import get_current_user
+from app.auth.websocket import authenticate_websocket_bearer as _authenticate_websocket
 from app.core.progress import REDIS_URL, project_status_channel, project_status_key
-from app.core.security import TokenError, decode_access_token
 from app.db.session import get_db
 from app.models.entities import Project, User
 
@@ -80,43 +80,14 @@ async def stream_project_status(
     )
 
 
-async def _authenticate_websocket(websocket: WebSocket, db: Session) -> User | None:
-    """Extract and verify a bearer token from the WebSocket handshake, returning
-    the authenticated user or None.
-
-    Browsers cannot set an `Authorization` header (or any custom header) on the
-    `WebSocket` constructor, so the normal `get_current_user` HTTP dependency
-    doesn't apply here. Cookie-based auth would require changing how
-    POST /auth/login issues tokens (app/api/v1/auth.py, PR #1's scaffolding) —
-    out of scope for this batch, see the checkpoint doc.
-
-    Instead this uses the `Sec-WebSocket-Protocol` field, which a browser CAN
-    set programmatically (`new WebSocket(url, ["bearer", token])`) without any
-    change to how tokens are issued or stored. This is preferred over a `?token=`
-    query parameter: query strings land in browser history, `Referer` headers to
-    third-party resources, and are far more commonly captured verbatim by
-    default proxy/webserver access-log configs than a WebSocket subprotocol
-    header is. The token is never logged by this function.
-
-    Convention: the client offers exactly two subprotocol values, `"bearer"`
-    and the access token, e.g. `Sec-WebSocket-Protocol: bearer, <token>`. If
-    the server accepts the connection it must echo back `subprotocol="bearer"`
-    in `websocket.accept()` per the WebSocket handshake spec (a server must
-    select one of the offered subprotocols to accept from among them).
-    """
-    raw = websocket.headers.get("sec-websocket-protocol", "")
-    parts = [p.strip() for p in raw.split(",") if p.strip()]
-    if len(parts) != 2 or parts[0].lower() != "bearer" or not parts[1]:
-        return None
-    token = parts[1]
-    try:
-        user_id = decode_access_token(token)
-    except TokenError:
-        return None
-    user = db.get(User, user_id)
-    if user is None or not user.is_active:
-        return None
-    return user
+# _authenticate_websocket (the Sec-WebSocket-Protocol bearer-token check) now
+# lives in app.auth.websocket.authenticate_websocket_bearer, imported above
+# under this same local name — extracted during Batch 2A so
+# app/api/v1/collaboration.py can reuse it without importing anything under
+# the app.api.v1 package (see that module's import comment for why that
+# matters for this repo's narrow-dependency CI test slice). No behavior
+# change: same function body, same Sec-WebSocket-Protocol convention, same
+# tests in tests/test_project_status.py still exercise it unmodified.
 
 
 @router.websocket("/{project_id}/status/ws")
