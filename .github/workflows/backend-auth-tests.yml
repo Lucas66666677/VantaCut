@@ -45,6 +45,9 @@ on:
       - "backend/app/tasks/distributed_compute_tasks.py"
       - "backend/tests/test_marketplace_dashboard.py"
       - "backend/tests/test_distributed_compute.py"
+      # CI-fix: marketplace_templates/creator_connect_accounts/compute_nodes
+      # timestamp server_default gap surfaced by this batch's own CI run
+      - "backend/tests/test_marketplace_and_compute_schema.py"
       - "backend/tests/conftest.py"
       - "backend/tests/test_alembic_version_column_width.py"
       - "backend/requirements.txt"
@@ -171,6 +174,9 @@ jobs:
       - name: Run review_participants schema regression tests (schema-fix PR)
         working-directory: backend
         run: python -m pytest tests/test_review_participant_schema.py -v
+      - name: Run marketplace/compute timestamp schema regression tests (Batch 2B CI fix)
+        working-directory: backend
+        run: python -m pytest tests/test_marketplace_and_compute_schema.py -v
       - name: Run marketplace.py creator dashboard security tests (Batch 2B)
         working-directory: backend
         run: python -m pytest tests/test_marketplace_dashboard.py -v
