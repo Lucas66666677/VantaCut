@@ -3,6 +3,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
+from app.auth.dependencies import get_current_user
 from app.db.session import get_db
 from app.models.entities import MediaAsset, Timeline, User
 from app.schemas.relighting import (
@@ -20,12 +21,13 @@ router = APIRouter(tags=["virtual-relighting"])
 
 @router.post("/media/{media_asset_id}/analyze-virtual-relight", response_model=RelightingTaskResponse, status_code=status.HTTP_202_ACCEPTED)
 def request_relighting_analysis(
-    media_asset_id: UUID, payload: RelightingAnalysisRequest, db: Session = Depends(get_db),
+    media_asset_id: UUID, payload: RelightingAnalysisRequest,
+    current_user: User = Depends(get_current_user), db: Session = Depends(get_db),
 ) -> RelightingTaskResponse:
-    asset, user = db.get(MediaAsset, media_asset_id), db.get(User, payload.user_id)
+    asset = db.get(MediaAsset, media_asset_id)
     if asset is None:
         raise HTTPException(status_code=404, detail="Media asset not found")
-    if user is None or asset.project.owner_id != user.id:
+    if asset.project.owner_id != current_user.id:
         raise HTTPException(status_code=403, detail="User cannot analyze this media asset")
     task = analyze_depth_and_lighting.delay(str(asset.id), payload.depth_model, payload.frame_stride, payload.use_proxy)
     return RelightingTaskResponse(task_id=task.id, media_asset_id=asset.id, status="queued")
@@ -33,12 +35,13 @@ def request_relighting_analysis(
 
 @router.put("/timelines/{timeline_id}/virtual-relight", response_model=VirtualRelightTimelineResponse)
 def update_virtual_relight(
-    timeline_id: UUID, payload: VirtualRelightTimelineRequest, db: Session = Depends(get_db),
+    timeline_id: UUID, payload: VirtualRelightTimelineRequest,
+    current_user: User = Depends(get_current_user), db: Session = Depends(get_db),
 ) -> VirtualRelightTimelineResponse:
-    timeline, user = db.get(Timeline, timeline_id), db.get(User, payload.user_id)
+    timeline = db.get(Timeline, timeline_id)
     if timeline is None:
         raise HTTPException(status_code=404, detail="Timeline not found")
-    if user is None or timeline.project.owner_id != user.id:
+    if timeline.project.owner_id != current_user.id:
         raise HTTPException(status_code=403, detail="User cannot modify this timeline")
     settings = VirtualRelightSettings(
         enabled=payload.enabled,
