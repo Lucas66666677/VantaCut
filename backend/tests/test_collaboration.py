@@ -1,8 +1,10 @@
 """Batch 2A security tests for app/api/v1/collaboration.py (real-time
 timeline collaboration WebSocket).
 
-Identity (`_authenticate_websocket`, reused unmodified from
-project_status.py — see that module for its own coverage) and authorization
+Identity (`authenticate_websocket_bearer`, shared with project_status.py via
+app.auth.websocket — see that module's docstring for why it was extracted
+there during this batch, and test_project_status.py for that route's own
+coverage of the same function) and authorization
 (`_authorize_timeline_access` — project owner OR a `ReviewParticipant` row
 for this specific timeline; see that function's docstring for the evidence
 this reuses, not invents) are exercised for real against the test database.
@@ -37,11 +39,20 @@ from app.models.entities import Project, ReviewParticipant, ReviewRole, Timeline
 
 def _load_collaboration_router():
     """Load app/api/v1/collaboration.py directly, bypassing `app.api.__init__`
-    — same reasoning as tests/conftest.py::_load_auth_router. This module
-    also imports app.api.v1.project_status (for `_authenticate_websocket`),
-    which is loaded the same way by test_project_status.py — both imports
-    resolve fine on their own; neither pulls in the heavier per-route
-    dependencies (boto3, celery) that audio_description.py/
+    — same reasoning as tests/conftest.py::_load_auth_router.
+
+    collaboration.py imports `app.auth.websocket.authenticate_websocket_bearer`
+    rather than importing it from app.api.v1.project_status directly: an
+    earlier version of this module did `from app.api.v1.project_status
+    import _authenticate_websocket`, and CI proved (ModuleNotFoundError:
+    'torch', via app.api.v1.analysis -> ... -> app.ml.retention_model) that
+    ANY `from app.api.v1.X import ...` statement — even inside a module
+    that is itself loaded by file path — forces Python to first import the
+    `app.api`/`app.api.v1` *packages* to resolve the dotted path, which runs
+    `app/api/__init__.py` and its eager import of all ~75 routers. Living
+    under `app.auth` (whose own `__init__.py` is empty) avoids that. Neither
+    that shared helper nor app.services.collaboration pulls in the heavier
+    per-route dependencies (boto3, celery) that audio_description.py/
     audio_enhancement.py need.
     """
     module_path = Path(__file__).resolve().parents[1] / "app" / "api" / "v1" / "collaboration.py"
