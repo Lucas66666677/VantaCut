@@ -5,9 +5,12 @@ Identity (`authenticate_websocket_bearer`, shared with project_status.py via
 app.auth.websocket — see that module's docstring for why it was extracted
 there during this batch, and test_project_status.py for that route's own
 coverage of the same function) and authorization
-(`_authorize_timeline_access` — project owner OR a `ReviewParticipant` row
-for this specific timeline; see that function's docstring for the evidence
-this reuses, not invents) are exercised for real against the test database.
+(`_authorize_timeline_access` — project owner ONLY; see that function's
+docstring for why an earlier "owner OR ReviewParticipant" version of this
+function was replaced after a focused follow-up review found the WebSocket
+grants real, bidirectional live-editing capability that ReviewParticipant
+is never evidenced to carry anywhere else in the codebase) are exercised
+for real against the test database.
 
 `collaboration_hub` (the Redis-backed pub/sub relay) is replaced with a
 lightweight recording fake in every test here — not to fake identity or
@@ -21,11 +24,12 @@ non-inferred assertion: an unauthorized caller never calls `hub.join(...)`,
 so it never starts a pub/sub subscription or receives a single buffered Yjs
 update, regardless of anything else in this test's assertions.
 
-CI evidence note: test_ws_non_owner_review_participant_accepted sets
+CI evidence note: test_ws_non_owner_review_participant_rejected still sets
 ReviewParticipant.created_at/updated_at explicitly rather than relying on
-the ORM's declared server_default — see that test's docstring for the
-pre-existing, production-affecting migration bug this works around without
-touching the migration (out of scope for this batch).
+the ORM's declared server_default, purely to construct the row at all —
+see that test's docstring for the pre-existing, production-affecting
+migration bug this works around without touching the migration here (fixed
+separately by a stacked schema migration; see that PR).
 """
 from __future__ import annotations
 
@@ -199,26 +203,27 @@ def test_ws_owner_accepted(app_client, db_session, hub):
     assert hub.joined == [str(timeline.id)]
 
 
-def test_ws_non_owner_review_participant_accepted(app_client, db_session, hub):
-    """Proves this fix does not silently narrow collaboration to owner-only:
-    a real, pre-existing non-owner access grant (ReviewParticipant) must
-    still be able to join. If this test is ever changed to expect rejection,
-    that is a product-semantics change, not a security hardening — see
-    _authorize_timeline_access's docstring for why REVIEWER is included.
+def test_ws_non_owner_review_participant_rejected(app_client, db_session, hub):
+    """Proves ReviewParticipant does NOT grant live-editing collaboration
+    access — corrected after a focused follow-up review found the earlier
+    "owner OR ReviewParticipant" version of _authorize_timeline_access was
+    overbroad. ReviewParticipant's only evidenced scope anywhere in this
+    codebase (app/api/v1/reviews.py) is review comments and approve/reject
+    decisions on separate ReviewComment/TimelineReview entities — never the
+    actual Timeline/Clip content this WebSocket's Yjs channel authoritatively
+    mutates. Extending ReviewParticipant to cover that would be inventing new
+    permission semantics under an existing name, not reusing one. If this
+    test is ever changed to expect acceptance, that must be a deliberate,
+    evidenced product decision (e.g. a real, designed reviewer-collaboration
+    feature), not a reversion to this incorrect assumption.
 
-    created_at/updated_at are set explicitly here, not left to the ORM's
-    declared `server_default=func.now()`, because CI proved that default
-    isn't actually wired up for this table: migration
-    0012_add_review_approval.py's `review_participants` DDL declares both
-    columns `nullable=False` with no `server_default` (unlike
-    0001_initial.py's tables, which all set `server_default=sa.func.now()`
-    correctly). That's a genuine, pre-existing schema bug — the exact same
-    unadorned `ReviewParticipant(timeline_id=..., user_id=...)` construction
-    already exists in production at app/api/v1/reviews.py:133, so this
-    isn't something Batch 2A introduced and isn't this route's bug to fix;
-    it's reported as a discovered limitation. Setting timestamps explicitly
-    here is the smallest way to exercise the real ReviewParticipant access
-    grant without a migration change, which is out of scope for this batch."""
+    created_at/updated_at are still set explicitly here, not left to the
+    ORM's declared `server_default=func.now()`, purely to construct the row
+    at all: migration 0012_add_review_approval.py's `review_participants`
+    DDL declares both columns `nullable=False` with no `server_default`
+    (unlike 0001_initial.py's tables, which all set
+    `server_default=sa.func.now()` correctly) — a genuine, pre-existing
+    schema bug, fixed separately by a stacked migration PR rather than here."""
     owner = _make_user(db_session)
     project = _make_project(db_session, owner)
     timeline = _make_timeline(db_session, project)
@@ -236,9 +241,40 @@ def test_ws_non_owner_review_participant_accepted(app_client, db_session, hub):
     db_session.flush()
     token = create_access_token(reviewer.id)
 
-    with app_client.websocket_connect(
-        f"/api/v1/timelines/{timeline.id}/collaboration",
-        subprotocols=["bearer", token],
-    ) as websocket:
-        assert websocket.accepted_subprotocol == "bearer"
-    assert hub.joined == [str(timeline.id)]
+    with pytest.raises(WebSocketDisconnect):
+        with app_client.websocket_connect(
+            f"/api/v1/timelines/{timeline.id}/collaboration",
+            subprotocols=["bearer", token],
+        ):
+            pass
+    assert hub.joined == []
+
+
+def test_ws_approver_review_participant_rejected(app_client, db_session, hub):
+    """Same as above for the APPROVER role, to prove this isn't a
+    reviewer-vs-approver distinction — neither review role gets live-editing
+    collaboration access, only the project owner does."""
+    owner = _make_user(db_session)
+    project = _make_project(db_session, owner)
+    timeline = _make_timeline(db_session, project)
+    approver = _make_user(db_session)
+    now = datetime.now(timezone.utc)
+    db_session.add(
+        ReviewParticipant(
+            timeline_id=timeline.id,
+            user_id=approver.id,
+            role=ReviewRole.APPROVER,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    db_session.flush()
+    token = create_access_token(approver.id)
+
+    with pytest.raises(WebSocketDisconnect):
+        with app_client.websocket_connect(
+            f"/api/v1/timelines/{timeline.id}/collaboration",
+            subprotocols=["bearer", token],
+        ):
+            pass
+    assert hub.joined == []
