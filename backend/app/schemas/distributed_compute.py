@@ -6,7 +6,13 @@ from pydantic import BaseModel, Field, field_validator
 
 
 class ComputeNodeEnrollRequest(BaseModel):
-    owner_id: UUID
+    # owner_id was previously a client-supplied field trusted as the node's
+    # owner with no verified identity at all. It's removed here rather than
+    # kept-but-ignored: no frontend caller sends it (confirmed by search),
+    # so there is no compatibility reason to keep it, and keeping an unused
+    # field around invites a future caller reintroducing the same trust bug.
+    # The authoritative owner is now the enrollment endpoint's
+    # get_current_user dependency (see distributed_compute.py).
     label: str = Field(min_length=1, max_length=160)
     public_key: str = Field(min_length=40, max_length=512, description="Base64 raw Ed25519 public key")
     node_kind: Literal["browser", "desktop"] = "browser"
