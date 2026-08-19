@@ -8,6 +8,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.auth.dependencies import get_current_user
 from app.core.config import settings
 from app.db.session import get_db
 from app.models.entities import (
@@ -197,8 +198,30 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)) -> dic
     return {"received": True}
 
 
+def _creator_dashboard_not_found() -> HTTPException:
+    # Same response whether {creator_id} doesn't correspond to a real user or
+    # simply isn't the caller's own dashboard — do not confirm to an
+    # unauthorized caller whether a given creator_id has marketplace
+    # earnings/payout data at all.
+    return HTTPException(status_code=404, detail="Creator dashboard not found")
+
+
 @router.get("/creators/{creator_id}/dashboard", response_model=CreatorDashboardResponse)
-def creator_dashboard(creator_id: UUID, db: Session = Depends(get_db)) -> CreatorDashboardResponse:
+def creator_dashboard(
+    creator_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> CreatorDashboardResponse:
+    # creator_id is a direct users.id foreign key everywhere in this file
+    # (MarketplaceTemplate.creator_id, CreatorConnectAccount.creator_id both
+    # FK -> users.id; there is no separate Creator entity) — so "is the
+    # caller this creator" is exactly "current_user.id == creator_id".
+    # {creator_id} in the path is never trusted as identity on its own: an
+    # authenticated caller only ever sees their own dashboard, matching how
+    # every other ownership check in this codebase resolves identity from
+    # the verified token, not from a client-supplied/path id.
+    if creator_id != current_user.id:
+        raise _creator_dashboard_not_found()
     templates = db.scalars(select(MarketplaceTemplate).where(MarketplaceTemplate.creator_id == creator_id)).all()
     template_ids = [item.id for item in templates]
     if not template_ids:
