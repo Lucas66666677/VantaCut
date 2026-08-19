@@ -69,6 +69,10 @@ on:
       - "backend/app/schemas/beauty_enhancement.py"
       - "backend/app/schemas/rough_cut.py"
       - "backend/tests/test_auto_editing_identity.py"
+      # CI-fix: auto_director_runs timestamp server_default gap surfaced by
+      # M1's own test suite (same bug class as the schema-hygiene PR, this
+      # time for a table M1's tests are the first to actually insert into)
+      - "backend/tests/test_auto_director_schema.py"
       - "backend/tests/conftest.py"
       - "backend/tests/test_alembic_version_column_width.py"
       - "backend/requirements.txt"
@@ -235,6 +239,9 @@ jobs:
       - name: Run distributed_compute.py node enrollment security tests (Batch 2B)
         working-directory: backend
         run: python -m pytest tests/test_distributed_compute.py -v
+      - name: Run auto_director_runs schema regression tests (M1 CI fix)
+        working-directory: backend
+        run: python -m pytest tests/test_auto_director_schema.py -v
       - name: Run auto-editing route identity security tests (M1)
         working-directory: backend
         run: python -m pytest tests/test_auto_editing_identity.py -v
