@@ -73,6 +73,28 @@ on:
       # M1's own test suite (same bug class as the schema-hygiene PR, this
       # time for a table M1's tests are the first to actually insert into)
       - "backend/tests/test_auto_director_schema.py"
+      # M2 mechanical migration (second SPOOFABLE_USER_ID slice): spatial/optics routes
+      - "backend/app/api/v1/spatial.py"
+      - "backend/app/api/v1/spatial_text.py"
+      - "backend/app/api/v1/spatial_video.py"
+      - "backend/app/api/v1/optics.py"
+      - "backend/app/api/v1/film_optics.py"
+      - "backend/app/api/v1/relighting.py"
+      - "backend/app/api/v1/parallax.py"
+      - "backend/app/api/v1/travel_maps.py"
+      - "backend/app/schemas/spatial.py"
+      - "backend/app/schemas/spatial_text.py"
+      - "backend/app/schemas/spatial_video.py"
+      - "backend/app/schemas/optics.py"
+      - "backend/app/schemas/film_optics.py"
+      - "backend/app/schemas/relighting.py"
+      - "backend/app/schemas/parallax.py"
+      - "backend/app/schemas/travel_maps.py"
+      - "backend/tests/test_spatial_optics_identity.py"
+      # CI-fix: spatial_video_jobs timestamp server_default gap, discovered
+      # while auditing M2's own candidate files (same bug class as the
+      # 0030-0033 fixes)
+      - "backend/tests/test_spatial_video_job_schema.py"
       - "backend/tests/conftest.py"
       - "backend/tests/test_alembic_version_column_width.py"
       - "backend/requirements.txt"
@@ -149,7 +171,9 @@ jobs:
             cryptography==43.0.3 \
             Pillow==11.0.0 \
             numpy==1.26.4 \
-            opencv-python-headless==4.10.0.84
+            opencv-python-headless==4.10.0.84 \
+            scipy==1.14.1 \
+            "onnxruntime>=1.20,<2"
       # Pillow/numpy/opencv-python-headless are new as of M1: loading
       # app/api/v1/auto_narrative.py and app/api/v1/beat_sync.py (via
       # importlib, same as every other route module in this test slice)
@@ -175,6 +199,21 @@ jobs:
       # auto_sfx.py, beauty_enhancement.py, rough_cut.py, and every
       # pre-existing module already covered by this workflow) imports
       # render_tasks.py or otherwise needs these three packages.
+      # scipy/onnxruntime are new as of M2: app/api/v1/film_optics.py imports
+      # app.services.lens_physics at module level, which does
+      # `from scipy.special import j1` at module level; app/api/v1/relighting.py
+      # imports app.services.virtual_relighting at module level, which does
+      # `import onnxruntime` at module level. Both were traced statically
+      # (reading each service module's imports directly, not guessed) rather
+      # than discovered one CI round-trip at a time. Both packages are
+      # already pinned in requirements.txt (scipy==1.14.1,
+      # onnxruntime>=1.20,<2) — pre-existing project dependencies for the
+      # optical-flow/lens-correction and ONNX-based relighting-model
+      # pipelines, not new additions invented for this test slice. No other
+      # M2 route module (spatial.py, spatial_text.py, spatial_video.py,
+      # optics.py, parallax.py, travel_maps.py) or their task modules import
+      # scipy or onnxruntime — confirmed by reading each task module's
+      # imports directly.
       # cryptography is new as of Batch 2B: app/services/marketplace_security.py
       # imports Fernet at module level (marketplace.py's encrypted-template
       # payload envelope), and app/services/distributed_compute.py's
@@ -245,3 +284,9 @@ jobs:
       - name: Run auto-editing route identity security tests (M1)
         working-directory: backend
         run: python -m pytest tests/test_auto_editing_identity.py -v
+      - name: Run spatial_video_jobs schema regression tests (M2 CI fix)
+        working-directory: backend
+        run: python -m pytest tests/test_spatial_video_job_schema.py -v
+      - name: Run spatial/optics route identity security tests (M2)
+        working-directory: backend
+        run: python -m pytest tests/test_spatial_optics_identity.py -v
