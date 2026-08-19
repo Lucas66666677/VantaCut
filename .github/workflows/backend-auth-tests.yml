@@ -51,6 +51,24 @@ on:
       # Schema hygiene PR: template_licenses/distributed_render_*/compute_credit_ledger
       # timestamp server_default gap (same bug class, proven for these 5 tables)
       - "backend/tests/test_distributed_render_and_license_schema.py"
+      # M1 mechanical migration (first SPOOFABLE_USER_ID slice): auto-editing routes
+      - "backend/app/api/v1/auto_director.py"
+      - "backend/app/api/v1/auto_narrative.py"
+      - "backend/app/api/v1/auto_pip.py"
+      - "backend/app/api/v1/auto_reframe.py"
+      - "backend/app/api/v1/auto_sfx.py"
+      - "backend/app/api/v1/beat_sync.py"
+      - "backend/app/api/v1/beauty_enhancement.py"
+      - "backend/app/api/v1/rough_cut.py"
+      - "backend/app/schemas/auto_director.py"
+      - "backend/app/schemas/auto_narrative.py"
+      - "backend/app/schemas/auto_pip.py"
+      - "backend/app/schemas/auto_reframe.py"
+      - "backend/app/schemas/auto_sfx.py"
+      - "backend/app/schemas/beat_sync.py"
+      - "backend/app/schemas/beauty_enhancement.py"
+      - "backend/app/schemas/rough_cut.py"
+      - "backend/tests/test_auto_editing_identity.py"
       - "backend/tests/conftest.py"
       - "backend/tests/test_alembic_version_column_width.py"
       - "backend/requirements.txt"
@@ -189,3 +207,6 @@ jobs:
       - name: Run distributed_compute.py node enrollment security tests (Batch 2B)
         working-directory: backend
         run: python -m pytest tests/test_distributed_compute.py -v
+      - name: Run auto-editing route identity security tests (M1)
+        working-directory: backend
+        run: python -m pytest tests/test_auto_editing_identity.py -v
