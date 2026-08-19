@@ -30,6 +30,8 @@ on:
       - "backend/tests/test_collaboration.py"
       - "backend/tests/test_audio_description.py"
       - "backend/tests/test_audio_enhancement.py"
+      # Stacked schema-fix PR (review_participants timestamp defaults)
+      - "backend/tests/test_review_participant_schema.py"
       - "backend/tests/conftest.py"
       - "backend/tests/test_alembic_version_column_width.py"
       - "backend/requirements.txt"
@@ -141,3 +143,6 @@ jobs:
       - name: Run audio_enhancement.py security tests (Batch 2A)
         working-directory: backend
         run: python -m pytest tests/test_audio_enhancement.py -v
+      - name: Run review_participants schema regression tests (schema-fix PR)
+        working-directory: backend
+        run: python -m pytest tests/test_review_participant_schema.py -v
