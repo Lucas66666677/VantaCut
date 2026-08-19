@@ -11,11 +11,25 @@ on:
       - "backend/app/api/v1/project_status.py"
       - "backend/app/api/v1/ai.py"
       - "backend/app/ai/**"
+      # Batch 2A (collaboration.py, audio_description.py, audio_enhancement.py)
+      - "backend/app/api/v1/collaboration.py"
+      - "backend/app/services/collaboration.py"
+      - "backend/app/api/v1/audio_description.py"
+      - "backend/app/services/audio_description.py"
+      - "backend/app/tasks/audio_description_tasks.py"
+      - "backend/app/api/v1/audio_enhancement.py"
+      - "backend/app/services/audio_enhancement.py"
+      - "backend/app/tasks/audio_enhancement_tasks.py"
+      - "backend/app/services/storage.py"
+      - "backend/app/worker.py"
       - "backend/app/models/entities.py"
       - "backend/migrations/**"
       - "backend/tests/test_auth.py"
       - "backend/tests/test_project_status.py"
       - "backend/tests/test_ai_analyze_video.py"
+      - "backend/tests/test_collaboration.py"
+      - "backend/tests/test_audio_description.py"
+      - "backend/tests/test_audio_enhancement.py"
       - "backend/tests/conftest.py"
       - "backend/tests/test_alembic_version_column_width.py"
       - "backend/requirements.txt"
@@ -86,7 +100,23 @@ jobs:
             PyJWT==2.10.1 \
             redis==5.2.1 \
             pytest==8.3.4 \
-            httpx==0.27.2
+            httpx==0.27.2 \
+            celery==5.4.0 \
+            boto3==1.35.90
+      # celery/boto3 are new as of Batch 2A: app/api/v1/audio_description.py
+      # and app/api/v1/audio_enhancement.py import their Celery task modules
+      # (app/tasks/audio_description_tasks.py, app/tasks/audio_enhancement_tasks.py)
+      # at module level, which transitively import app.worker (needs the
+      # `celery` package to construct the Celery() app object — no broker
+      # connection happens at import time) and app.services.storage (needs
+      # `boto3`/`botocore` for its module-level `import boto3` — no AWS/S3
+      # credentials or network call happens at import time either). Neither
+      # pulls in an ML/audio-processing stack: app/services/audio_description.py
+      # and app/services/audio_enhancement.py (the actual DSP/generation
+      # logic) only import stdlib (subprocess, wave, shlex) plus app.core.config
+      # at module level — confirmed by reading both files — so this test
+      # slice still does not need ffmpeg, torch, or any GPU/ML dependency to
+      # import and exercise the security-relevant route code.
       - name: Apply database migrations
         working-directory: backend
         run: alembic upgrade head
@@ -102,3 +132,12 @@ jobs:
       - name: Run ai.py analyze-video security tests (Batch 1)
         working-directory: backend
         run: python -m pytest tests/test_ai_analyze_video.py -v
+      - name: Run collaboration.py security tests (Batch 2A)
+        working-directory: backend
+        run: python -m pytest tests/test_collaboration.py -v
+      - name: Run audio_description.py security tests (Batch 2A)
+        working-directory: backend
+        run: python -m pytest tests/test_audio_description.py -v
+      - name: Run audio_enhancement.py security tests (Batch 2A)
+        working-directory: backend
+        run: python -m pytest tests/test_audio_enhancement.py -v
