@@ -48,6 +48,9 @@ on:
       # CI-fix: marketplace_templates/creator_connect_accounts/compute_nodes
       # timestamp server_default gap surfaced by this batch's own CI run
       - "backend/tests/test_marketplace_and_compute_schema.py"
+      # Schema hygiene PR: template_licenses/distributed_render_*/compute_credit_ledger
+      # timestamp server_default gap (same bug class, proven for these 5 tables)
+      - "backend/tests/test_distributed_render_and_license_schema.py"
       - "backend/tests/conftest.py"
       - "backend/tests/test_alembic_version_column_width.py"
       - "backend/requirements.txt"
@@ -177,6 +180,9 @@ jobs:
       - name: Run marketplace/compute timestamp schema regression tests (Batch 2B CI fix)
         working-directory: backend
         run: python -m pytest tests/test_marketplace_and_compute_schema.py -v
+      - name: Run template_licenses/distributed_render_*/compute_credit_ledger schema regression tests (schema hygiene PR)
+        working-directory: backend
+        run: python -m pytest tests/test_distributed_render_and_license_schema.py -v
       - name: Run marketplace.py creator dashboard security tests (Batch 2B)
         working-directory: backend
         run: python -m pytest tests/test_marketplace_dashboard.py -v
