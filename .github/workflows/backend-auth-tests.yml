@@ -51,6 +51,28 @@ on:
       # Schema hygiene PR: template_licenses/distributed_render_*/compute_credit_ledger
       # timestamp server_default gap (same bug class, proven for these 5 tables)
       - "backend/tests/test_distributed_render_and_license_schema.py"
+      # M1 mechanical migration (first SPOOFABLE_USER_ID slice): auto-editing routes
+      - "backend/app/api/v1/auto_director.py"
+      - "backend/app/api/v1/auto_narrative.py"
+      - "backend/app/api/v1/auto_pip.py"
+      - "backend/app/api/v1/auto_reframe.py"
+      - "backend/app/api/v1/auto_sfx.py"
+      - "backend/app/api/v1/beat_sync.py"
+      - "backend/app/api/v1/beauty_enhancement.py"
+      - "backend/app/api/v1/rough_cut.py"
+      - "backend/app/schemas/auto_director.py"
+      - "backend/app/schemas/auto_narrative.py"
+      - "backend/app/schemas/auto_pip.py"
+      - "backend/app/schemas/auto_reframe.py"
+      - "backend/app/schemas/auto_sfx.py"
+      - "backend/app/schemas/beat_sync.py"
+      - "backend/app/schemas/beauty_enhancement.py"
+      - "backend/app/schemas/rough_cut.py"
+      - "backend/tests/test_auto_editing_identity.py"
+      # CI-fix: auto_director_runs timestamp server_default gap surfaced by
+      # M1's own test suite (same bug class as the schema-hygiene PR, this
+      # time for a table M1's tests are the first to actually insert into)
+      - "backend/tests/test_auto_director_schema.py"
       - "backend/tests/conftest.py"
       - "backend/tests/test_alembic_version_column_width.py"
       - "backend/requirements.txt"
@@ -124,7 +146,35 @@ jobs:
             httpx==0.27.2 \
             celery==5.4.0 \
             boto3==1.35.90 \
-            cryptography==43.0.3
+            cryptography==43.0.3 \
+            Pillow==11.0.0 \
+            numpy==1.26.4 \
+            opencv-python-headless==4.10.0.84
+      # Pillow/numpy/opencv-python-headless are new as of M1: loading
+      # app/api/v1/auto_narrative.py and app/api/v1/beat_sync.py (via
+      # importlib, same as every other route module in this test slice)
+      # transitively imports app/tasks/auto_narrative_tasks.py and
+      # app/tasks/beat_sync_tasks.py, both of which import
+      # app/tasks/render_tasks.py at module level. render_tasks.py imports
+      # ~25 rendering-effect service modules, three of which import a real
+      # third-party package at module level rather than lazily inside a
+      # function: app/services/language_review_overlay.py and
+      # app/services/mechanical_ar_overlay.py both do `import numpy as np`
+      # and `from PIL import Image, ImageDraw, ImageFont`;
+      # app/services/forensic_provenance.py does `import cv2` and
+      # `import numpy as np`. This was surfaced by M1's first real CI run
+      # (ModuleNotFoundError: No module named 'PIL'), then the rest of the
+      # chain was traced statically (all ~25 render_tasks.py service
+      # imports read directly, not guessed) to catch every missing package
+      # in one fix rather than one CI round-trip per package. All three are
+      # ordinary, already-in-requirements.txt packages (headless OpenCV
+      # variant, no GUI deps) — not GPU/ML frameworks — genuinely required
+      # just to *import* these two route modules, independent of whether
+      # any test actually exercises rendering. No other route module in
+      # this test slice (auto_director.py, auto_pip.py, auto_reframe.py,
+      # auto_sfx.py, beauty_enhancement.py, rough_cut.py, and every
+      # pre-existing module already covered by this workflow) imports
+      # render_tasks.py or otherwise needs these three packages.
       # cryptography is new as of Batch 2B: app/services/marketplace_security.py
       # imports Fernet at module level (marketplace.py's encrypted-template
       # payload envelope), and app/services/distributed_compute.py's
@@ -189,3 +239,9 @@ jobs:
       - name: Run distributed_compute.py node enrollment security tests (Batch 2B)
         working-directory: backend
         run: python -m pytest tests/test_distributed_compute.py -v
+      - name: Run auto_director_runs schema regression tests (M1 CI fix)
+        working-directory: backend
+        run: python -m pytest tests/test_auto_director_schema.py -v
+      - name: Run auto-editing route identity security tests (M1)
+        working-directory: backend
+        run: python -m pytest tests/test_auto_editing_identity.py -v

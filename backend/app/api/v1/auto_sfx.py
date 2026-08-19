@@ -3,6 +3,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
+from app.auth.dependencies import get_current_user
 from app.db.session import get_db
 from app.models.entities import MediaAsset, Timeline, User
 from app.schemas.auto_sfx import AutoSFXRequest, AutoSFXResponse
@@ -12,10 +13,13 @@ router = APIRouter(prefix="/timelines", tags=["auto-sfx"])
 
 
 @router.put("/{timeline_id}/auto-sfx", response_model=AutoSFXResponse)
-def configure_auto_sfx(timeline_id: UUID, payload: AutoSFXRequest, db: Session = Depends(get_db)) -> AutoSFXResponse:
-    timeline, user = db.get(Timeline, timeline_id), db.get(User, payload.user_id)
+def configure_auto_sfx(
+    timeline_id: UUID, payload: AutoSFXRequest,
+    current_user: User = Depends(get_current_user), db: Session = Depends(get_db),
+) -> AutoSFXResponse:
+    timeline = db.get(Timeline, timeline_id)
     if timeline is None: raise HTTPException(status_code=404, detail="Timeline not found")
-    if user is None or timeline.project.owner_id != user.id: raise HTTPException(status_code=403, detail="User cannot modify this timeline")
+    if timeline.project.owner_id != current_user.id: raise HTTPException(status_code=403, detail="User cannot modify this timeline")
     ids = [item for item in (payload.pop_asset_id, payload.whoosh_asset_id, payload.impact_asset_id, payload.bgm_asset_id) if item]
     assets = db.query(MediaAsset).filter(MediaAsset.id.in_(ids), MediaAsset.project_id == timeline.project_id).all() if ids else []
     if len(assets) != len(set(ids)): raise HTTPException(status_code=422, detail="Every SFX/BGM asset must belong to this project")

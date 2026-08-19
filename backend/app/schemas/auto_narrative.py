@@ -8,7 +8,6 @@ NarrativeTone = Literal["funny_vlogger", "emotional_vlogger"]
 
 
 class AutoNarrativeRequest(BaseModel):
-    user_id: UUID
     media_asset_ids: list[UUID] = Field(min_length=5, max_length=10)
     bgm_asset_id: UUID | None = None
     tone: NarrativeTone = "funny_vlogger"

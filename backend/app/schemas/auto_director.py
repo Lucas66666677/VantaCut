@@ -7,7 +7,6 @@ from pydantic import BaseModel, Field
 
 
 class AutoDirectorCreateRequest(BaseModel):
-    user_id: UUID
     topic: str = Field(min_length=8, max_length=1200)
     target_duration_seconds: int = Field(default=90, ge=20, le=900)
     language: str = Field(default="zh-TW", min_length=2, max_length=16)

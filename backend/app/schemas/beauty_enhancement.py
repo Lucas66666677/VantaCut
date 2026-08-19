@@ -4,7 +4,6 @@ from pydantic import BaseModel, Field
 
 
 class BeautyEnhancementRequest(BaseModel):
-    user_id: UUID
     enabled: bool = True
     skin_smoothing: int = Field(default=35, ge=0, le=100)
     brightness: int = Field(default=8, ge=0, le=100)

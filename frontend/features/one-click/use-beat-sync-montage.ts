@@ -2,6 +2,8 @@
 
 import { useCallback, useState } from "react";
 
+import { authenticatedFetch } from "@/lib/api/authenticated-fetch";
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 export interface BeatSyncMontageOptions {
@@ -24,11 +26,10 @@ export function useBeatSyncMontage(projectId: string | null, userId: string | nu
     setIsGenerating(true);
     setError(null);
     try {
-      const response = await fetch(`${API_URL}/api/v1/projects/${projectId}/beat-sync/montage`, {
+      const response = await authenticatedFetch(`${API_URL}/api/v1/projects/${projectId}/beat-sync/montage`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          user_id: userId,
           bgm_asset_id: options.bgmAssetId,
           media_asset_ids: options.mediaAssetIds,
           aspect_ratio: options.aspectRatio ?? "9:16",

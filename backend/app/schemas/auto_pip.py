@@ -5,7 +5,6 @@ from pydantic import BaseModel, Field
 
 
 class AutoPipRequest(BaseModel):
-    user_id: UUID
     main_asset_id: UUID
     selfie_asset_id: UUID
     corner: Literal["top_left", "top_right", "bottom_left", "bottom_right"] = "bottom_right"
@@ -24,7 +23,6 @@ class OverlayPoint(BaseModel):
 
 
 class AutoPipOverlayRequest(BaseModel):
-    user_id: UUID
     kind: Literal["highlighter", "arrow"]
     points: list[OverlayPoint] = Field(min_length=2, max_length=512)
     start_time: float = Field(ge=0)

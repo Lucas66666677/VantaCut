@@ -2,6 +2,8 @@
 
 import { useCallback, useState } from "react";
 
+import { authenticatedFetch } from "@/lib/api/authenticated-fetch";
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 export type AutoNarrativeTone = "funny_vlogger" | "emotional_vlogger";
@@ -23,10 +25,10 @@ export function useAutoNarrative(projectId?: string, userId?: string) {
     if (input.mediaAssetIds.length < 5 || input.mediaAssetIds.length > 10) throw new Error("請選擇 5 至 10 段影片素材");
     setPending(true); setMessage(null);
     try {
-      const response = await fetch(`${API_URL}/api/v1/projects/${projectId}/auto-narrative`, {
+      const response = await authenticatedFetch(`${API_URL}/api/v1/projects/${projectId}/auto-narrative`, {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          user_id: userId, media_asset_ids: input.mediaAssetIds, bgm_asset_id: input.bgmAssetId || null,
+          media_asset_ids: input.mediaAssetIds, bgm_asset_id: input.bgmAssetId || null,
           tone: input.tone, language: "zh", target_duration_seconds: input.targetDurationSeconds,
           resolution: "1080p", aspect_ratio: "9:16", auto_render: input.autoRender,
         }),

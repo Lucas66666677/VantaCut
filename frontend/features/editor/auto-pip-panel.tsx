@@ -2,6 +2,8 @@
 
 import { useState, type DragEvent } from "react";
 
+import { authenticatedFetch } from "@/lib/api/authenticated-fetch";
+
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
 type Tool = "highlighter" | "arrow";
 type Point = { x: number; y: number };
@@ -13,11 +15,11 @@ export function AutoPipPanel({ timelineId, userId, mainAssetId, playheadTime }: 
   const configure = async () => {
     if (!timelineId || !userId || !main || !selfie) return;
     setPending(true); setMessage(null);
-    try { const response = await fetch(`${API_BASE_URL}/api/v1/timelines/${timelineId}/auto-pip`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ user_id: userId, main_asset_id: main, selfie_asset_id: selfie, corner, focus_after_seconds: 3 }) }); const result = await response.json() as { detail?: string }; if (!response.ok) throw new Error(result.detail ?? "無法設定智慧畫中畫"); setMessage("已開始對齊、去背與語音焦點分析；可繼續編輯。 "); } catch (error) { setMessage(error instanceof Error ? error.message : "無法設定智慧畫中畫"); } finally { setPending(false); }
+    try { const response = await authenticatedFetch(`${API_BASE_URL}/api/v1/timelines/${timelineId}/auto-pip`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ main_asset_id: main, selfie_asset_id: selfie, corner, focus_after_seconds: 3 }) }); const result = await response.json() as { detail?: string }; if (!response.ok) throw new Error(result.detail ?? "無法設定智慧畫中畫"); setMessage("已開始對齊、去背與語音焦點分析；可繼續編輯。 "); } catch (error) { setMessage(error instanceof Error ? error.message : "無法設定智慧畫中畫"); } finally { setPending(false); }
   };
   const saveDrawing = async () => {
     if (!timelineId || !userId || points.length < 2) return;
-    try { const response = await fetch(`${API_BASE_URL}/api/v1/timelines/${timelineId}/auto-pip/overlays`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ user_id: userId, kind: tool, points: tool === "arrow" ? [points[0], points.at(-1)] : points, start_time: Number(playheadTime.toFixed(3)), end_time: Number((playheadTime + 2.5).toFixed(3)), color: tool === "highlighter" ? "#eaff3b" : "#ff4d6d", width: tool === "highlighter" ? 12 : 7 }) }); if (!response.ok) throw new Error("無法儲存標記"); setPoints([]); setMessage(`已加入 ${tool === "highlighter" ? "螢光筆" : "雷射箭頭"}向量動畫（${playheadTime.toFixed(1)} 秒）。`); } catch (error) { setMessage(error instanceof Error ? error.message : "無法儲存標記"); }
+    try { const response = await authenticatedFetch(`${API_BASE_URL}/api/v1/timelines/${timelineId}/auto-pip/overlays`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kind: tool, points: tool === "arrow" ? [points[0], points.at(-1)] : points, start_time: Number(playheadTime.toFixed(3)), end_time: Number((playheadTime + 2.5).toFixed(3)), color: tool === "highlighter" ? "#eaff3b" : "#ff4d6d", width: tool === "highlighter" ? 12 : 7 }) }); if (!response.ok) throw new Error("無法儲存標記"); setPoints([]); setMessage(`已加入 ${tool === "highlighter" ? "螢光筆" : "雷射箭頭"}向量動畫（${playheadTime.toFixed(1)} 秒）。`); } catch (error) { setMessage(error instanceof Error ? error.message : "無法儲存標記"); }
   };
   const polyline = points.map((point) => `${point.x * 100},${point.y * 100}`).join(" ");
   const assetDrop = (setter: (assetId: string) => void) => ({ onDragOver: (event: DragEvent<HTMLInputElement>) => event.preventDefault(), onDrop: (event: DragEvent<HTMLInputElement>) => { event.preventDefault(); setter(event.dataTransfer.getData("application/x-media-asset") || event.dataTransfer.getData("text/plain")); } });
