@@ -7,6 +7,7 @@ import { KeyframeEditor } from "@/features/editor/keyframe-editor";
 import { SpeedCurvePanel } from "@/features/editor/speed-curve-panel";
 import { useOptimisticEffectsStore } from "@/features/editor/optimistic-effects-store";
 import { ContextToolShelf, useWorkspaceContext, type WorkspaceTool } from "@/features/workspace/context-aware-workspace";
+import { authenticatedFetch } from "@/lib/api/authenticated-fetch";
 import type { TimelineClip } from "@/types/timeline";
 import type { ClipLayout } from "@/types/timeline";
 
@@ -64,7 +65,7 @@ export function ClipInspector({ clip, timelineId, userId }: ClipInspectorProps) 
 
     setIsSubmitting(true);
     try {
-      const response = await fetch(
+      const response = await authenticatedFetch(
         `${API_BASE_URL}/api/v1/timelines/${timelineId}/clips/${clip.id}/noise-reduction`,
         { method: enabled ? "POST" : "DELETE" },
       );
@@ -86,7 +87,7 @@ export function ClipInspector({ clip, timelineId, userId }: ClipInspectorProps) 
     if (!canPersist) return;
     setIsSubmitting(true);
     try {
-      const response = await fetch(`${API_BASE_URL}/api/v1/timelines/${timelineId}/clips/${clip.id}/studio-sound`, enabled
+      const response = await authenticatedFetch(`${API_BASE_URL}/api/v1/timelines/${timelineId}/clips/${clip.id}/studio-sound`, enabled
         ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ wet_mix: wetMix }) }
         : { method: "DELETE" });
       const result = enabled ? await response.json() as { task_id?: string; detail?: string } : undefined;
@@ -102,7 +103,7 @@ export function ClipInspector({ clip, timelineId, userId }: ClipInspectorProps) 
     if (!studioSoundEnabled || !canPersist) return;
     setIsSubmitting(true); setError(null);
     try {
-      const response = await fetch(`${API_BASE_URL}/api/v1/timelines/${timelineId}/clips/${clip.id}/studio-sound`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ wet_mix: wetMix }) });
+      const response = await authenticatedFetch(`${API_BASE_URL}/api/v1/timelines/${timelineId}/clips/${clip.id}/studio-sound`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ wet_mix: wetMix }) });
       if (!response.ok) throw new Error("Studio Sound 尚未完成，請稍後再調整比例");
     } catch (requestError) { setError(requestError instanceof Error ? requestError.message : "無法儲存乾濕比"); } finally { setIsSubmitting(false); }
   };

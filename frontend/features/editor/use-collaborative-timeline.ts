@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as Y from "yjs";
 
 import { useTimelineStore } from "@/features/editor/timeline-store";
+import { useAuthStore } from "@/lib/auth/auth-store";
 import type { TimelineClipInput } from "@/types/timeline";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
@@ -56,6 +57,13 @@ export function useCollaborativeTimeline({ timelineId, currentUser, initialTimel
   const [peers, setPeers] = useState<Record<string, CollaboratorPresence>>({});
   const [lockState, setLockState] = useState<Record<string, { ownerId: string; expiresAt: number }>>({});
   const applyCollaborationTimeline = useTimelineStore((state) => state.applyCollaborationTimeline);
+  // Selecting `token` (rather than reading useAuthStore.getState() once) is
+  // deliberate, matching features/project-status/use-project-status.ts: it
+  // makes the connection effect below re-run whenever the session changes
+  // (e.g. after logout/login), so a token obtained after this component
+  // first mounted is still picked up, and the socket is torn down on logout
+  // instead of being left open with a now-invalid credential.
+  const token = useAuthStore((state) => state.token);
 
   const sendPresence = useCallback((patch: Partial<Omit<CollaboratorPresence, keyof CollaborationUser | "lastSeenAt">>, force = false) => {
     const websocket = websocketRef.current;
@@ -98,8 +106,14 @@ export function useCollaborativeTimeline({ timelineId, currentUser, initialTimel
   }, [locks]);
 
   useEffect(() => {
-    if (!timelineId) return;
-    const websocket = new WebSocket(websocketUrl(timelineId));
+    if (!timelineId || !token) return;
+    // Backend convention (Sec-WebSocket-Protocol — see
+    // backend/app/api/v1/collaboration.py, which reuses
+    // project_status.py's _authenticate_websocket): browsers cannot set a
+    // custom Authorization header on the WebSocket constructor, so the
+    // access token travels as the second offered subprotocol instead.
+    // Never as a `?token=` query string, and never logged.
+    const websocket = new WebSocket(websocketUrl(timelineId), ["bearer", token]);
     websocket.binaryType = "arraybuffer";
     websocketRef.current = websocket;
     const onUpdate = (update: Uint8Array, origin: unknown) => {
@@ -131,7 +145,7 @@ export function useCollaborativeTimeline({ timelineId, currentUser, initialTimel
       websocket.close();
       websocketRef.current = undefined;
     };
-  }, [currentUser, doc, sendPresence, timelineId]);
+  }, [currentUser, doc, sendPresence, timelineId, token]);
 
   useEffect(() => useTimelineStore.subscribe((state, previous) => {
     if (state.playheadTime !== previous.playheadTime || state.selectedClipId !== previous.selectedClipId) {
