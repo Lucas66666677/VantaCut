@@ -32,6 +32,22 @@ on:
       - "backend/tests/test_audio_enhancement.py"
       # Stacked schema-fix PR (review_participants timestamp defaults)
       - "backend/tests/test_review_participant_schema.py"
+      # Batch 2B (marketplace creator dashboard, compute node enrollment)
+      - "backend/app/api/v1/marketplace.py"
+      - "backend/app/schemas/marketplace.py"
+      - "backend/app/services/marketplace_payments.py"
+      - "backend/app/services/marketplace_security.py"
+      - "backend/app/services/marketplace_settlement.py"
+      - "backend/app/api/v1/distributed_compute.py"
+      - "backend/app/schemas/distributed_compute.py"
+      - "backend/app/services/distributed_compute.py"
+      - "backend/app/services/compute_signaling.py"
+      - "backend/app/tasks/distributed_compute_tasks.py"
+      - "backend/tests/test_marketplace_dashboard.py"
+      - "backend/tests/test_distributed_compute.py"
+      # CI-fix: marketplace_templates/creator_connect_accounts/compute_nodes
+      # timestamp server_default gap surfaced by this batch's own CI run
+      - "backend/tests/test_marketplace_and_compute_schema.py"
       - "backend/tests/conftest.py"
       - "backend/tests/test_alembic_version_column_width.py"
       - "backend/requirements.txt"
@@ -104,7 +120,19 @@ jobs:
             pytest==8.3.4 \
             httpx==0.27.2 \
             celery==5.4.0 \
-            boto3==1.35.90
+            boto3==1.35.90 \
+            cryptography==43.0.3
+      # cryptography is new as of Batch 2B: app/services/marketplace_security.py
+      # imports Fernet at module level (marketplace.py's encrypted-template
+      # payload envelope), and app/services/distributed_compute.py's
+      # verify_node_signature imports Ed25519PublicKey from it (already
+      # exercised indirectly by this batch's node-signature regression
+      # test). Neither app/api/v1/marketplace.py nor
+      # app/services/marketplace_payments.py imports the `stripe` package
+      # at module level — `import stripe` only happens inside
+      # marketplace_payments.py's `_stripe()` function body — so this test
+      # slice does not need the Stripe SDK installed to load marketplace.py
+      # or exercise the dashboard route's authorization gate.
       # celery/boto3 are new as of Batch 2A: app/api/v1/audio_description.py
       # and app/api/v1/audio_enhancement.py import their Celery task modules
       # (app/tasks/audio_description_tasks.py, app/tasks/audio_enhancement_tasks.py)
@@ -146,3 +174,12 @@ jobs:
       - name: Run review_participants schema regression tests (schema-fix PR)
         working-directory: backend
         run: python -m pytest tests/test_review_participant_schema.py -v
+      - name: Run marketplace/compute timestamp schema regression tests (Batch 2B CI fix)
+        working-directory: backend
+        run: python -m pytest tests/test_marketplace_and_compute_schema.py -v
+      - name: Run marketplace.py creator dashboard security tests (Batch 2B)
+        working-directory: backend
+        run: python -m pytest tests/test_marketplace_dashboard.py -v
+      - name: Run distributed_compute.py node enrollment security tests (Batch 2B)
+        working-directory: backend
+        run: python -m pytest tests/test_distributed_compute.py -v

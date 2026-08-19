@@ -9,6 +9,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect, status
 from sqlalchemy.orm import Session
 
+from app.auth.dependencies import get_current_user
 from app.db.session import get_db
 from app.models.entities import ComputeNode, ComputeNodeStatus, DistributedRenderAssignment, RenderJob, RenderStatus, User
 from app.schemas.distributed_compute import (
@@ -33,9 +34,18 @@ def _node_credits(db: Session, node: ComputeNode) -> int:
 
 
 @router.post("/nodes", response_model=ComputeNodeResponse, status_code=status.HTTP_201_CREATED)
-def enroll_compute_node(payload: ComputeNodeEnrollRequest, db: Session = Depends(get_db)) -> ComputeNodeResponse:
-    if db.get(User, payload.owner_id) is None:
-        raise HTTPException(status_code=404, detail="User not found")
+def enroll_compute_node(
+    payload: ComputeNodeEnrollRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> ComputeNodeResponse:
+    # This is an END-USER enrollment action (a person opting their own
+    # browser/desktop into the compute pool), not part of the compute-node
+    # protocol itself: the node's own identity/authorization for every
+    # subsequent call (heartbeat, assignments, signed results) is the
+    # Ed25519 keypair verified by verify_node_signature below, which this
+    # change does not touch. Only "which user does this enrollment belong
+    # to" moves from a client-supplied owner_id to the verified caller.
     try:
         if len(base64.b64decode(payload.public_key, validate=True)) != 32:
             raise ValueError
@@ -43,10 +53,10 @@ def enroll_compute_node(payload: ComputeNodeEnrollRequest, db: Session = Depends
         raise HTTPException(status_code=422, detail="public_key must be a base64 Ed25519 public key") from exc
     existing = db.query(ComputeNode).filter_by(public_key=payload.public_key).first()
     if existing:
-        if existing.owner_id != payload.owner_id:
+        if existing.owner_id != current_user.id:
             raise HTTPException(status_code=409, detail="This compute identity is already registered to another user")
         return ComputeNodeResponse(node_id=existing.id, status=existing.status.value, credits_earned=_node_credits(db, existing))
-    node = ComputeNode(owner_id=payload.owner_id, label=payload.label, public_key=payload.public_key, node_kind=payload.node_kind, status=ComputeNodeStatus.ACTIVE, capabilities_json=payload.capabilities, consent_json=payload.consent, renderer_image_digest=payload.renderer_image_digest, last_heartbeat_at=datetime.now(UTC))
+    node = ComputeNode(owner_id=current_user.id, label=payload.label, public_key=payload.public_key, node_kind=payload.node_kind, status=ComputeNodeStatus.ACTIVE, capabilities_json=payload.capabilities, consent_json=payload.consent, renderer_image_digest=payload.renderer_image_digest, last_heartbeat_at=datetime.now(UTC))
     db.add(node); db.commit(); db.refresh(node)
     return ComputeNodeResponse(node_id=node.id, status=node.status.value)
 
