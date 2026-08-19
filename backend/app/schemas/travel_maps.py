@@ -7,7 +7,6 @@ from pydantic import BaseModel, Field
 class TravelMapRequest(BaseModel):
     """A route can be inferred from `route_text` or from the selected timed transcript."""
 
-    user_id: UUID
     route_text: str | None = Field(default=None, max_length=500)
     source_asset_id: UUID | None = None
     timeline_start: float | None = Field(default=None, ge=0)

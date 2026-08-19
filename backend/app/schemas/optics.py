@@ -4,18 +4,16 @@ from pydantic import BaseModel, Field
 
 
 class OpticsAnalysisRequest(BaseModel):
-    user_id: UUID
+    pass
 
 
 class OpticalFlowRetimeRequest(BaseModel):
-    user_id: UUID
     slow_motion_factor: float = Field(gt=1, le=8)
     apply_motion_blur: bool = False
     use_proxy: bool = True
 
 
 class OpticalLookRequest(BaseModel):
-    user_id: UUID
     chromatic_aberration_px: float = Field(default=1.2, ge=0, le=12)
     vignette_strength: float = Field(default=.35, ge=0, le=1)
     vignette_power: float = Field(default=2.2, ge=.1, le=8)

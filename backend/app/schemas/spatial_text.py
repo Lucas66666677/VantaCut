@@ -3,7 +3,6 @@ from uuid import UUID
 from pydantic import BaseModel, Field
 
 class SpatialTrackingRequest(BaseModel):
-    user_id: UUID
     use_proxy: bool = True
 
 class SpatialTrackingResponse(BaseModel):
@@ -12,7 +11,6 @@ class SpatialTrackingResponse(BaseModel):
     status: str
 
 class SpatialTextRequest(BaseModel):
-    user_id: UUID
     source_asset_id: UUID
     text: str = Field(min_length=1, max_length=240)
     x: float = Field(ge=0, le=1)

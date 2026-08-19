@@ -7,7 +7,6 @@ from pydantic import BaseModel, Field
 
 
 class SpatialVideoExportRequest(BaseModel):
-    user_id: UUID
     source_render_job_id: UUID
     ipd_mm: float = Field(default=63.5, ge=50, le=75)
     horizontal_fov_degrees: float = Field(default=80, gt=35, lt=130)
