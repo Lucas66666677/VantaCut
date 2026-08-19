@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 
+import { authenticatedFetch } from "@/lib/api/authenticated-fetch";
+
 interface AudioAssetOption { id: string; filename: string; }
 interface AutoSfxPanelProps { timelineId: string; userId: string; audioAssets: AudioAssetOption[]; onConfigured?: (eventCount: number) => void; }
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
@@ -14,7 +16,7 @@ export function AutoSfxPanel({ timelineId, userId, audioAssets, onConfigured }: 
   const apply = async () => {
     setPending(true); setError(null);
     try {
-      const response = await fetch(`${API_URL}/api/v1/timelines/${timelineId}/auto-sfx`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ user_id: userId, pop_asset_id: pop || null, whoosh_asset_id: whoosh || null, impact_asset_id: impact || null, bgm_asset_id: bgm || null, bgm_volume: .16, ducking_enabled: true }) });
+      const response = await authenticatedFetch(`${API_URL}/api/v1/timelines/${timelineId}/auto-sfx`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ pop_asset_id: pop || null, whoosh_asset_id: whoosh || null, impact_asset_id: impact || null, bgm_asset_id: bgm || null, bgm_volume: .16, ducking_enabled: true }) });
       const payload = await response.json() as { detail?: string; event_count?: number };
       if (!response.ok || payload.event_count === undefined) throw new Error(payload.detail ?? "無法建立 Auto-SFX 軌");
       setEventCount(payload.event_count); onConfigured?.(payload.event_count);

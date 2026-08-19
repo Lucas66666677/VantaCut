@@ -4,6 +4,7 @@ import { useState } from "react";
 
 import { useOptimisticEffectsStore } from "@/features/editor/optimistic-effects-store";
 import type { FaceBounds } from "@/features/editor/use-face-mesh";
+import { authenticatedFetch } from "@/lib/api/authenticated-fetch";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 export interface CanvasPoint { x: number; y: number; }
@@ -29,7 +30,7 @@ export function IntentFloatingMenu({ anchor, mediaAssetId, timelineId, userId, f
     if (!timelineId) { setMessage("請先儲存時間軸，再啟用主角追蹤。"); return; }
     setBusy("tracking");
     try {
-      const response = await fetch(`${API_URL}/api/v1/timelines/${timelineId}/auto-reframe`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ user_id: userId, detector_stride: 2, smoothing: .78, max_pan_speed_px_per_second: 720 }) });
+      const response = await authenticatedFetch(`${API_URL}/api/v1/timelines/${timelineId}/auto-reframe`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ detector_stride: 2, smoothing: .78, max_pan_speed_px_per_second: 720 }) });
       if (!response.ok) throw new Error("無法設定主角追蹤");
       setMessage("主角追蹤已設定，直式預覽會跟隨人物。");
     } catch (error) { setMessage(error instanceof Error ? error.message : "主角追蹤設定失敗"); } finally { setBusy(null); }

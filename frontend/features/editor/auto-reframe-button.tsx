@@ -3,6 +3,7 @@
 import { useState } from "react";
 
 import { useProjectStatus } from "@/features/project-status/use-project-status";
+import { authenticatedFetch } from "@/lib/api/authenticated-fetch";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -22,9 +23,9 @@ export function AutoReframeButton({ timelineId, projectId, userId, resolution = 
   const convert = async () => {
     setSubmitting(true); setError(null);
     try {
-      const configured = await fetch(`${API_URL}/api/v1/timelines/${timelineId}/auto-reframe`, {
+      const configured = await authenticatedFetch(`${API_URL}/api/v1/timelines/${timelineId}/auto-reframe`, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ user_id: userId, detector_stride: 2, smoothing: .75, max_pan_speed_px_per_second: 720 }),
+        body: JSON.stringify({ detector_stride: 2, smoothing: .75, max_pan_speed_px_per_second: 720 }),
       });
       const configuration = await configured.json() as { detail?: string };
       if (!configured.ok) throw new Error(configuration.detail ?? "無法設定主角追蹤");
