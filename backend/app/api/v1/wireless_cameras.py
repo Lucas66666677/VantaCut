@@ -14,6 +14,7 @@ from fastapi.concurrency import run_in_threadpool
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.auth.dependencies import get_current_user
 from app.core.config import settings
 from app.db.session import get_db
 from app.models.entities import CameraDevice, CameraIngestChunk, CameraIngestSession, Project, Timeline, User
@@ -52,8 +53,13 @@ def _token_or_401(token: str | None, pairing_id: UUID):
 
 
 @router.post("/pairings", response_model=WirelessCameraPairingResponse, status_code=status.HTTP_201_CREATED)
-def create_pairing(timeline_id: UUID, payload: CreateWirelessCameraPairingRequest, db: Session = Depends(get_db)) -> WirelessCameraPairingResponse:
-    timeline = _owned_timeline(timeline_id, payload.user_id, db)
+def create_pairing(
+    timeline_id: UUID,
+    payload: CreateWirelessCameraPairingRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> WirelessCameraPairingResponse:
+    timeline = _owned_timeline(timeline_id, current_user.id, db)
     settings = dict(timeline.settings_json or {})
     multicam = dict(settings.get("wireless_multicam") or {})
     cameras = list(multicam.get("cameras") or [])
@@ -90,8 +96,16 @@ def create_pairing(timeline_id: UUID, payload: CreateWirelessCameraPairingReques
 
 
 @router.get("/pairings", response_model=list[WirelessCameraPairingStatus])
-def list_pairings(timeline_id: UUID, user_id: UUID, db: Session = Depends(get_db)) -> list[WirelessCameraPairingStatus]:
-    timeline = _owned_timeline(timeline_id, user_id, db)
+def list_pairings(
+    timeline_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[WirelessCameraPairingStatus]:
+    # Previously took `user_id` as a plain query parameter, letting anyone
+    # who knew a target user_id + timeline_id enumerate that user's
+    # wireless-camera pairings. Caller identity now comes exclusively from
+    # the verified bearer token.
+    timeline = _owned_timeline(timeline_id, current_user.id, db)
     cameras = (timeline.settings_json or {}).get("wireless_multicam", {}).get("cameras", [])
     return [WirelessCameraPairingStatus.model_validate(item) for item in cameras]
 
