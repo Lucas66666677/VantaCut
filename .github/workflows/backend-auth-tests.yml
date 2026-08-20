@@ -95,6 +95,9 @@ on:
       # while auditing M2's own candidate files (same bug class as the
       # 0030-0033 fixes)
       - "backend/tests/test_spatial_video_job_schema.py"
+      # Priority fix (post-M2): distributed_compute.py's render-offload
+      # endpoint had no verified caller identity at all
+      - "backend/tests/test_render_offload_identity.py"
       - "backend/tests/conftest.py"
       - "backend/tests/test_alembic_version_column_width.py"
       - "backend/requirements.txt"
@@ -290,3 +293,6 @@ jobs:
       - name: Run spatial/optics route identity security tests (M2)
         working-directory: backend
         run: python -m pytest tests/test_spatial_optics_identity.py -v
+      - name: Run render-offload route identity security tests (priority fix)
+        working-directory: backend
+        run: python -m pytest tests/test_render_offload_identity.py -v
