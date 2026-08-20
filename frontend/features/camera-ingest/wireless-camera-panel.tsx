@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { authenticatedFetch } from "@/lib/api/authenticated-fetch";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -78,8 +79,8 @@ export function WirelessCameraPanel({ timelineId, projectId, userId }: { timelin
     if (!timelineId || !userId || pairings.length >= 2) return;
     setCreating(true); setError(null);
     try {
-      const response = await fetch(`${API_URL}/api/v1/timelines/${timelineId}/wireless-cameras/pairings`, {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ user_id: userId, label: label || `無線鏡頭 ${pairings.length + 1}` }),
+      const response = await authenticatedFetch(`${API_URL}/api/v1/timelines/${timelineId}/wireless-cameras/pairings`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ label: label || `無線鏡頭 ${pairings.length + 1}` }),
       });
       if (!response.ok) throw new Error((await response.json().catch(() => ({}))).detail ?? "無法建立手機配對");
       const pairing = await response.json() as Pairing;
