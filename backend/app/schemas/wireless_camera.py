@@ -9,7 +9,9 @@ from pydantic import BaseModel, Field
 
 
 class CreateWirelessCameraPairingRequest(BaseModel):
-    user_id: UUID
+    # user_id removed: the pairing creator's identity is now derived
+    # exclusively from the authenticated bearer token (current_user.id),
+    # never client-supplied.
     label: str = Field(default="無線鏡頭", min_length=1, max_length=80)
 
 

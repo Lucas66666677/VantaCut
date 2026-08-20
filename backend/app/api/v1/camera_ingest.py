@@ -19,9 +19,10 @@ from fastapi.concurrency import run_in_threadpool
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.auth.dependencies import get_current_user
 from app.core.config import settings
 from app.db.session import get_db
-from app.models.entities import CameraDevice, CameraIngestChunk, CameraIngestSession, Project, Timeline
+from app.models.entities import CameraDevice, CameraIngestChunk, CameraIngestSession, Project, Timeline, User
 from app.schemas.camera_ingest import (
     CameraChunkAcceptedResponse,
     CameraIngestSessionResponse,
@@ -75,11 +76,20 @@ def _require_tls(request: Request) -> None:
 
 
 @router.post("/devices", response_model=RegisterCameraDeviceResponse, status_code=status.HTTP_201_CREATED)
-def register_camera_device(payload: RegisterCameraDeviceRequest, _: None = Depends(require_ingest_management_token), db: Session = Depends(get_db)) -> RegisterCameraDeviceResponse:
+def register_camera_device(
+    payload: RegisterCameraDeviceRequest,
+    _: None = Depends(require_ingest_management_token),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> RegisterCameraDeviceResponse:
+    # Two-factor control plane: the management token proves this caller may
+    # provision cameras at all; current_user (verified bearer token) proves
+    # which specific user's project is being provisioned for. A
+    # client-supplied user_id field is never trusted for the latter.
     project = db.get(Project, payload.project_id)
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found")
-    if project.owner_id != payload.user_id:
+    if project.owner_id != current_user.id:
         raise HTTPException(status_code=403, detail="User does not own this project")
     existing = db.scalar(select(CameraDevice).where(CameraDevice.project_id == payload.project_id, CameraDevice.device_identifier == payload.device_identifier))
     if existing is not None:
@@ -102,12 +112,18 @@ def register_camera_device(payload: RegisterCameraDeviceRequest, _: None = Depen
 
 
 @router.post("/devices/{device_id}/sessions", response_model=CameraIngestSessionResponse, status_code=status.HTTP_201_CREATED)
-def start_camera_ingest_session(device_id: UUID, payload: StartCameraIngestRequest, _: None = Depends(require_ingest_management_token), db: Session = Depends(get_db)) -> CameraIngestSessionResponse:
+def start_camera_ingest_session(
+    device_id: UUID,
+    payload: StartCameraIngestRequest,
+    _: None = Depends(require_ingest_management_token),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> CameraIngestSessionResponse:
     device = db.get(CameraDevice, device_id)
     if device is None or not device.is_active:
         raise HTTPException(status_code=404, detail="Active camera device not found")
     project = db.get(Project, device.project_id)
-    if project is None or project.owner_id != payload.user_id:
+    if project is None or project.owner_id != current_user.id:
         raise HTTPException(status_code=403, detail="User does not own this camera project")
     existing = db.scalar(select(CameraIngestSession).where(CameraIngestSession.device_id == device_id, CameraIngestSession.capture_id == payload.capture_id))
     if existing is not None:
