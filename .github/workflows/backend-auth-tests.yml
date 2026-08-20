@@ -172,6 +172,15 @@ jobs:
       # is unset. Production sets this via the host's real secret manager,
       # not this file.
       MARKETPLACE_TEMPLATE_ENCRYPTION_KEY: h1fe4qWkECesYJIJFWNTSN1xZ43hbHF6jggP8wxroJA=
+      # CI-only Fernet key (generated for this workflow only, never reused
+      # anywhere real). Needed by test_camera_ingest_identity.py's
+      # test_register_rightful_owner_succeeds, the first test in this CI
+      # slice to exercise register_camera_device's encrypt_device_secret()
+      # -> app.services.camera_ingest_security._fernet(), which raises
+      # CameraIngestSecurityError (503) when INGEST_DEVICE_ENCRYPTION_KEY
+      # is unset. Production sets this via the host's real secret manager,
+      # not this file.
+      INGEST_DEVICE_ENCRYPTION_KEY: JnRypXlgXnGgxTRqANz5LDKxVOx-A3AWd_HB9L3hJKI=
       ENVIRONMENT: test
     steps:
       - uses: actions/checkout@v4
