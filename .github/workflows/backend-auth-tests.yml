@@ -149,6 +149,15 @@ jobs:
       # CI-only secret, never reused anywhere real. Production sets JWT_SECRET_KEY
       # via the host's real secret manager, not this file.
       JWT_SECRET_KEY: ci-test-only-secret-do-not-reuse-1234567890
+      # CI-only Fernet key (generated for this workflow only, never reused
+      # anywhere real). Needed by test_marketplace_mixed_identity.py's
+      # test_publish_rightful_owner_succeeds, the first test in this CI
+      # slice to exercise publish_template's encrypt_template_payload() ->
+      # app.services.marketplace_security._fernet(), which raises
+      # MarketplaceSecurityError (503) when MARKETPLACE_TEMPLATE_ENCRYPTION_KEY
+      # is unset. Production sets this via the host's real secret manager,
+      # not this file.
+      MARKETPLACE_TEMPLATE_ENCRYPTION_KEY: h1fe4qWkECesYJIJFWNTSN1xZ43hbHF6jggP8wxroJA=
       ENVIRONMENT: test
     steps:
       - uses: actions/checkout@v4
