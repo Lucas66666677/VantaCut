@@ -42,7 +42,18 @@ class ComputeNodeHeartbeatRequest(BaseModel):
 
 
 class DecentralizeRenderRequest(BaseModel):
-    owner_id: UUID
+    # owner_id was previously a client-supplied field trusted outright as
+    # the caller's identity for the "only the project owner can
+    # decentralize this render" check in
+    # app/services/distributed_compute.py's create_batch — i.e. any caller
+    # could claim to be any project owner. It's removed rather than
+    # kept-but-ignored: a full-repo search found no frontend or backend
+    # caller that sends it, so there is no compatibility reason to keep it,
+    # and leaving an unused field in place invites a future caller
+    # reintroducing the same trust bug. The authoritative owner is now the
+    # offload endpoint's get_current_user dependency (see
+    # distributed_compute.py::offload_render_job) — the same pattern
+    # already used for ComputeNodeEnrollRequest above.
     chunk_seconds: int = Field(default=5, ge=2, le=20)
     replication_factor: int = Field(default=2, ge=2, le=3)
     resolution: Literal["1080p", "4k", "8k"] = "4k"
