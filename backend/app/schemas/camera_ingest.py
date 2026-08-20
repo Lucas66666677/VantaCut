@@ -23,7 +23,9 @@ class CameraMetadata(BaseModel):
 
 
 class RegisterCameraDeviceRequest(BaseModel):
-    user_id: UUID
+    # user_id removed: the provisioning caller's identity is now derived
+    # exclusively from the authenticated bearer token (current_user.id),
+    # never client-supplied, alongside the existing management-token gate.
     project_id: UUID
     device_identifier: str = Field(min_length=3, max_length=160)
     display_name: str = Field(min_length=1, max_length=200)
@@ -38,7 +40,7 @@ class RegisterCameraDeviceResponse(BaseModel):
 
 
 class StartCameraIngestRequest(BaseModel):
-    user_id: UUID
+    # user_id removed: same reasoning as RegisterCameraDeviceRequest above.
     capture_id: str = Field(min_length=1, max_length=160)
     timeline_id: UUID | None = None
     metadata: CameraMetadata = Field(default_factory=CameraMetadata)
