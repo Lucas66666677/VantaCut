@@ -7,7 +7,8 @@ from pydantic import BaseModel, Field
 
 
 class PublishMarketplaceTemplateRequest(BaseModel):
-    creator_id: UUID
+    # creator_id removed: the publishing creator is now derived exclusively
+    # from the authenticated caller (current_user.id), never client-supplied.
     template_id: UUID
     slug: str = Field(pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$", max_length=180)
     title: str = Field(min_length=1, max_length=200)
@@ -32,7 +33,8 @@ class MarketplaceTemplateResponse(BaseModel):
 
 
 class CreateLicenseRequest(BaseModel):
-    buyer_id: UUID
+    # buyer_id removed: the buyer is now derived exclusively from the
+    # authenticated caller (current_user.id), never client-supplied.
     project_id: UUID
 
 
@@ -44,7 +46,8 @@ class CheckoutResponse(BaseModel):
 
 
 class ApplyLicenseRequest(BaseModel):
-    buyer_id: UUID
+    # buyer_id removed: the buyer is now derived exclusively from the
+    # authenticated caller (current_user.id), never client-supplied.
     timeline_id: UUID
 
 
@@ -55,8 +58,10 @@ class ApplyLicenseResponse(BaseModel):
     blackbox_render_only: bool
 
 
-class ConnectOnboardingRequest(BaseModel):
-    creator_id: UUID
+# ConnectOnboardingRequest removed: start_connect_onboarding took no fields
+# once creator_id (the only field it had) was removed — the creator is now
+# derived exclusively from the authenticated caller (current_user.id), so
+# the route no longer accepts a request body at all.
 
 
 class ConnectOnboardingResponse(BaseModel):
