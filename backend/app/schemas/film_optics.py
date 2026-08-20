@@ -4,7 +4,6 @@ from pydantic import BaseModel, Field, model_validator
 
 
 class FilmOpticsMasterRequest(BaseModel):
-    user_id: UUID
     enabled: bool = True
     grain_amount: float = Field(default=.18, ge=0, le=1)
     grain_size_px: float = Field(default=1.2, gt=0, le=8)

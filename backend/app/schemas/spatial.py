@@ -6,7 +6,6 @@ from pydantic import BaseModel, Field, model_validator
 
 
 class SpatialReconstructionRequest(BaseModel):
-    user_id: UUID
     frame_rate: float = Field(default=2, ge=.5, le=8)
     max_frames: int = Field(default=500, ge=30, le=1_500)
     iterations: int = Field(default=30_000, ge=1_000, le=100_000)
@@ -21,7 +20,6 @@ class VirtualCameraKeyframe(BaseModel):
 
 
 class VirtualCameraRenderRequest(BaseModel):
-    user_id: UUID
     camera_path: list[VirtualCameraKeyframe] = Field(min_length=2, max_length=120)
     fps: int = Field(default=30, ge=12, le=60)
     width: int = Field(default=1920, ge=640, le=3840)

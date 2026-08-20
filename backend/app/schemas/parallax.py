@@ -5,7 +5,6 @@ from pydantic import BaseModel
 
 
 class ParallaxLayerRequest(BaseModel):
-    user_id: UUID
     depth_model: Literal["auto", "depth_anything", "midas_small"] = "auto"
     use_proxy: bool = True
 

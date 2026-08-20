@@ -3,6 +3,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
+from app.auth.dependencies import get_current_user
 from app.db.session import get_db
 from app.models.entities import Timeline, User
 from app.schemas.film_optics import FilmOpticsMasterRequest, FilmOpticsMasterResponse
@@ -21,15 +22,15 @@ router = APIRouter(prefix="/timelines", tags=["film-optics"])
 
 @router.put("/{timeline_id}/film-optics-master", response_model=FilmOpticsMasterResponse)
 def update_film_optics_master(
-    timeline_id: UUID, payload: FilmOpticsMasterRequest, db: Session = Depends(get_db)
+    timeline_id: UUID, payload: FilmOpticsMasterRequest,
+    current_user: User = Depends(get_current_user), db: Session = Depends(get_db),
 ) -> FilmOpticsMasterResponse:
     timeline = db.get(Timeline, timeline_id)
-    user = db.get(User, payload.user_id)
     if timeline is None:
         raise HTTPException(status_code=404, detail="Timeline not found")
-    if user is None or timeline.project.owner_id != user.id:
+    if timeline.project.owner_id != current_user.id:
         raise HTTPException(status_code=403, detail="User cannot modify this timeline")
-    values = payload.model_dump(mode="json", exclude={"user_id"})
+    values = payload.model_dump(mode="json")
     settings = FilmOpticsSettings(**values)
     settings.validate()
     timeline.settings_json = {**dict(timeline.settings_json or {}), "film_optics_master": settings.to_dict()}
@@ -40,8 +41,8 @@ def update_film_optics_master(
 @router.get("/{timeline_id}/film-optics-mtf")
 def get_film_optics_mtf(
     timeline_id: UUID,
-    user_id: UUID,
     frame_width_px: int = 1920,
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
     """Return the calibrated PSF-derived MTF and LoCA values for preview controls.
@@ -52,10 +53,9 @@ def get_film_optics_mtf(
     if not 320 <= frame_width_px <= 8192:
         raise HTTPException(status_code=422, detail="frame_width_px must be between 320 and 8192")
     timeline = db.get(Timeline, timeline_id)
-    user = db.get(User, user_id)
     if timeline is None:
         raise HTTPException(status_code=404, detail="Timeline not found")
-    if user is None or timeline.project.owner_id != user.id:
+    if timeline.project.owner_id != current_user.id:
         raise HTTPException(status_code=403, detail="User cannot read this timeline")
 
     configured = dict((timeline.settings_json or {}).get("film_optics_master") or {})
