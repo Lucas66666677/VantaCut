@@ -98,6 +98,9 @@ on:
       # Priority fix (post-M2): distributed_compute.py's render-offload
       # endpoint had no verified caller identity at all
       - "backend/tests/test_render_offload_identity.py"
+      # Marketplace mixed-auth fix (post-priority-fix): publish_template,
+      # start_connect_onboarding, create_checkout, apply_template_license
+      - "backend/tests/test_marketplace_mixed_identity.py"
       - "backend/tests/conftest.py"
       - "backend/tests/test_alembic_version_column_width.py"
       - "backend/requirements.txt"
@@ -296,3 +299,6 @@ jobs:
       - name: Run render-offload route identity security tests (priority fix)
         working-directory: backend
         run: python -m pytest tests/test_render_offload_identity.py -v
+      - name: Run marketplace mixed-auth route identity security tests
+        working-directory: backend
+        run: python -m pytest tests/test_marketplace_mixed_identity.py -v
