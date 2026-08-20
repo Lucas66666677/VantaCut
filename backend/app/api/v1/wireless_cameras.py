@@ -60,8 +60,17 @@ def create_pairing(
     db: Session = Depends(get_db),
 ) -> WirelessCameraPairingResponse:
     timeline = _owned_timeline(timeline_id, current_user.id, db)
-    settings = dict(timeline.settings_json or {})
-    multicam = dict(settings.get("wireless_multicam") or {})
+    # Pre-existing bug, unrelated to the identity fix in this PR: this local
+    # was previously also named `settings`, shadowing the module-level
+    # `app.core.config.settings` import for the rest of the function and
+    # crashing (`AttributeError: 'dict' object has no attribute
+    # 'web_app_base_url'`) at the `mobile_url` line below. There was no
+    # test exercising create_pairing's success path before this PR, so it
+    # went undetected. Renamed here (and nowhere else in this file) to fix
+    # only this crash; app.core.config.settings.web_app_base_url below is
+    # now correctly the config singleton again.
+    timeline_settings = dict(timeline.settings_json or {})
+    multicam = dict(timeline_settings.get("wireless_multicam") or {})
     cameras = list(multicam.get("cameras") or [])
     active = [item for item in cameras if item.get("status") in {"paired", "capturing"}]
     if len(active) >= 2:
@@ -88,7 +97,7 @@ def create_pairing(
     token, expires_at = issue_wireless_camera_token(pairing_id=pairing_id, project_id=timeline.project_id, timeline_id=timeline.id, session_id=session.id)
     mobile_url = f"{settings.web_app_base_url.rstrip('/')}/wireless-camera?pairing={pairing_id}&token={token}"
     cameras.append({"pairing_id": str(pairing_id), "session_id": str(session.id), "label": payload.label, "camera_index": index, "status": "paired"})
-    timeline.settings_json = {**settings, "wireless_multicam": {**multicam, "capture_origin_ms": origin_ms, "cameras": cameras}}
+    timeline.settings_json = {**timeline_settings, "wireless_multicam": {**multicam, "capture_origin_ms": origin_ms, "cameras": cameras}}
     db.commit()
     return WirelessCameraPairingResponse(pairing_id=pairing_id, session_id=session.id, timeline_id=timeline.id, label=payload.label,
         camera_index=index, mobile_url=mobile_url, qr_code_data_uri=qr_code_data_uri(mobile_url), expires_at=expires_at,
