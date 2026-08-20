@@ -101,6 +101,20 @@ on:
       # Marketplace mixed-auth fix (post-priority-fix): publish_template,
       # start_connect_onboarding, create_checkout, apply_template_license
       - "backend/tests/test_marketplace_mixed_identity.py"
+      # Camera provisioning mixed-auth fix (post-marketplace-fix):
+      # register_camera_device, start_camera_ingest_session
+      # (app/api/v1/camera_ingest.py), create_pairing, list_pairings
+      # (app/api/v1/wireless_cameras.py)
+      - "backend/app/api/v1/camera_ingest.py"
+      - "backend/app/schemas/camera_ingest.py"
+      - "backend/app/api/v1/wireless_cameras.py"
+      - "backend/app/schemas/wireless_camera.py"
+      - "backend/app/services/camera_ingest_security.py"
+      - "backend/app/services/mobile_handoff.py"
+      - "backend/app/services/wireless_camera.py"
+      - "backend/app/tasks/ingest_tasks.py"
+      - "backend/tests/test_camera_ingest_identity.py"
+      - "backend/tests/test_wireless_camera_identity.py"
       - "backend/tests/conftest.py"
       - "backend/tests/test_alembic_version_column_width.py"
       - "backend/requirements.txt"
@@ -188,7 +202,8 @@ jobs:
             numpy==1.26.4 \
             opencv-python-headless==4.10.0.84 \
             scipy==1.14.1 \
-            "onnxruntime>=1.20,<2"
+            "onnxruntime>=1.20,<2" \
+            "qrcode[pil]==8.0"
       # Pillow/numpy/opencv-python-headless are new as of M1: loading
       # app/api/v1/auto_narrative.py and app/api/v1/beat_sync.py (via
       # importlib, same as every other route module in this test slice)
@@ -254,6 +269,17 @@ jobs:
       # at module level — confirmed by reading both files — so this test
       # slice still does not need ffmpeg, torch, or any GPU/ML dependency to
       # import and exercise the security-relevant route code.
+      # qrcode[pil] is new as of the camera-provisioning mixed-auth fix:
+      # app/api/v1/wireless_cameras.py's create_pairing calls
+      # app/services/mobile_handoff.py::qr_code_data_uri, which lazily does
+      # `import qrcode` / `import qrcode.image.svg` inside the function body
+      # (not at module level, so loading wireless_cameras.py via importlib
+      # does not itself require the package) but DOES need it installed for
+      # test_wireless_camera_identity.py::test_create_pairing_rightful_owner_succeeds
+      # to reach a 201 rather than a 500. qrcode[pil]==8.0 is already pinned
+      # in requirements.txt — a pre-existing production dependency for the
+      # mobile QR-handoff flow, not a new addition invented for this test
+      # slice.
       - name: Apply database migrations
         working-directory: backend
         run: alembic upgrade head
@@ -311,3 +337,9 @@ jobs:
       - name: Run marketplace mixed-auth route identity security tests
         working-directory: backend
         run: python -m pytest tests/test_marketplace_mixed_identity.py -v
+      - name: Run camera_ingest.py provisioning route identity security tests
+        working-directory: backend
+        run: python -m pytest tests/test_camera_ingest_identity.py -v
+      - name: Run wireless_cameras.py pairing route identity security tests
+        working-directory: backend
+        run: python -m pytest tests/test_wireless_camera_identity.py -v
