@@ -78,14 +78,36 @@ def node_heartbeat(node_id: UUID, payload: ComputeNodeHeartbeatRequest, db: Sess
 
 
 @router.post("/render-jobs/{render_job_id}/offload", response_model=DistributedBatchResponse, status_code=status.HTTP_202_ACCEPTED)
-def offload_render_job(render_job_id: UUID, payload: DecentralizeRenderRequest, db: Session = Depends(get_db)) -> DistributedBatchResponse:
+def offload_render_job(
+    render_job_id: UUID,
+    payload: DecentralizeRenderRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> DistributedBatchResponse:
+    # This is an END-USER control-plane action (the owner of a QUEUED
+    # centralized render choosing to move it into the distributed compute
+    # pool) — not part of the compute-node protocol itself. No node/worker
+    # ever calls this route: it takes no node_id, public key, or signature,
+    # unlike every route below it in this file. Node identity for every
+    # later step (fetching an assignment, submitting a signed chunk result)
+    # continues to be established by the Ed25519 keypair verified in
+    # verify_node_signature/verify_ticket, which this change does not
+    # touch. Only "which user is allowed to decentralize this specific
+    # render job" moves from a client-supplied `owner_id` (previously
+    # accepted with NO verified caller identity at all — any caller could
+    # pass any owner_id and have it trusted outright) to the authenticated
+    # caller, checked against the render job's actual owning project via
+    # the same `render_job.project.owner_id` relationship every other
+    # render-adjacent route in this codebase already uses.
     job = db.get(RenderJob, render_job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="Render job not found")
+    if job.project.owner_id != current_user.id:
+        raise HTTPException(status_code=403, detail="User cannot decentralize this render job")
     if job.status != RenderStatus.QUEUED:
         raise HTTPException(status_code=409, detail="Only a queued render job can be moved to the distributed pool")
     try:
-        batch = create_batch(db, render_job=job, owner_id=payload.owner_id, chunk_seconds=payload.chunk_seconds, replication_factor=payload.replication_factor, resolution=payload.resolution, container_format=payload.container_format)
+        batch = create_batch(db, render_job=job, owner_id=current_user.id, chunk_seconds=payload.chunk_seconds, replication_factor=payload.replication_factor, resolution=payload.resolution, container_format=payload.container_format)
         db.commit(); db.refresh(batch)
         return DistributedBatchResponse(batch_id=batch.id, status=batch.status.value, chunk_count=int(batch.manifest_json["chunk_count"]), manifest_sha256=batch.manifest_sha256)
     except DistributedComputeError as exc:
