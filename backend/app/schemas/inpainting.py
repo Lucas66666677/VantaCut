@@ -27,7 +27,6 @@ class NormalizedBrushStroke(BaseModel):
 
 
 class VideoInpaintingRequest(BaseModel):
-    user_id: UUID
     frame_time: float = Field(ge=0, description="Source-video time of the user annotation in seconds")
     mask_box: NormalizedMaskBox | None = None
     mask_strokes: list[NormalizedBrushStroke] = Field(default_factory=list, max_length=80)

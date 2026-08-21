@@ -11,7 +11,6 @@ class AcademicGlossaryEntry(BaseModel):
 
 
 class AcademicModeRequest(BaseModel):
-    user_id: UUID
     glossary: list[AcademicGlossaryEntry] = Field(default_factory=list, max_length=300)
     target_programmes: list[str] = Field(default_factory=list, max_length=12)
     language: str = Field(default="en", min_length=2, max_length=20)

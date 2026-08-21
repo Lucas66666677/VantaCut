@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
+from app.auth.dependencies import get_current_user
 from app.models.entities import AgentEditRun, AgentEditStatus, Timeline, User
 from app.schemas.agent import (
     AgentEditRequest, AgentEditResponse, AgentEditRunResponse, AgentPreviewRequest, AgentPreviewResponse,
@@ -22,26 +23,25 @@ from app.tasks.agent_tasks import apply_edit_instruction
 router = APIRouter(tags=["editing-agent"])
 
 
-def _authorise_timeline(db: Session, timeline_id: UUID, user_id: UUID) -> Timeline:
+def _authorise_timeline(db: Session, timeline_id: UUID, current_user: User) -> Timeline:
     timeline = db.get(Timeline, timeline_id)
-    user = db.get(User, user_id)
     if timeline is None:
         raise HTTPException(status_code=404, detail="Timeline not found")
-    if user is None or timeline.project.owner_id != user.id:
+    if timeline.project.owner_id != current_user.id:
         raise HTTPException(status_code=403, detail="User cannot edit this Timeline")
     return timeline
 
 
 @router.post("/timelines/{timeline_id}/agent-preview", response_model=AgentPreviewResponse)
 def preview_agent_edit(
-    timeline_id: UUID, payload: AgentPreviewRequest, db: Session = Depends(get_db)
+    timeline_id: UUID, payload: AgentPreviewRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)
 ) -> AgentPreviewResponse:
     """Return validated tool calls without touching Timeline records or creating a version.
 
     The browser supplies a deliberately compact state-tree snapshot so the
     proposal always targets the exact local Zustand state the editor is showing.
     """
-    timeline = _authorise_timeline(db, timeline_id, payload.user_id)
+    timeline = _authorise_timeline(db, timeline_id, current_user)
     if not timeline.is_current:
         raise HTTPException(status_code=409, detail="Please plan from the current Timeline version")
     provider = get_editing_agent_provider()
@@ -60,9 +60,9 @@ def preview_agent_edit(
 
 @router.post("/timelines/{timeline_id}/agent-edits", response_model=AgentEditResponse, status_code=status.HTTP_202_ACCEPTED)
 def create_agent_edit(
-    timeline_id: UUID, payload: AgentEditRequest, db: Session = Depends(get_db)
+    timeline_id: UUID, payload: AgentEditRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)
 ) -> AgentEditResponse:
-    timeline = _authorise_timeline(db, timeline_id, payload.user_id)
+    timeline = _authorise_timeline(db, timeline_id, current_user)
     if not timeline.is_current:
         raise HTTPException(status_code=409, detail="Please start the AI edit from the current Timeline version")
     run = AgentEditRun(
@@ -84,13 +84,12 @@ def create_agent_edit(
 
 @router.get("/agent-edits/{agent_run_id}", response_model=AgentEditRunResponse)
 def get_agent_edit(
-    agent_run_id: UUID, user_id: UUID, db: Session = Depends(get_db)
+    agent_run_id: UUID, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)
 ) -> AgentEditRunResponse:
     run = db.get(AgentEditRun, agent_run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="Agent edit run not found")
-    user = db.get(User, user_id)
-    if user is None or run.project.owner_id != user.id:
+    if run.project.owner_id != current_user.id:
         raise HTTPException(status_code=403, detail="User cannot view this Agent edit")
     return AgentEditRunResponse(
         id=run.id, source_timeline_id=run.source_timeline_id, result_timeline_id=run.result_timeline_id,
@@ -101,9 +100,9 @@ def get_agent_edit(
 
 @router.post("/timelines/{timeline_id}/undo", response_model=UndoTimelineResponse)
 def undo_agent_timeline_version(
-    timeline_id: UUID, payload: UndoTimelineRequest, db: Session = Depends(get_db)
+    timeline_id: UUID, payload: UndoTimelineRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)
 ) -> UndoTimelineResponse:
-    current = _authorise_timeline(db, timeline_id, payload.user_id)
+    current = _authorise_timeline(db, timeline_id, current_user)
     if not current.is_current:
         raise HTTPException(status_code=409, detail="Only the current Timeline version can be undone")
     if current.parent_timeline_id is None:

@@ -7,7 +7,6 @@ from pydantic import BaseModel, Field, model_validator
 
 
 class AvatarProfileCreate(BaseModel):
-    user_id: UUID
     project_id: UUID | None = None
     name: str = Field(min_length=1, max_length=160)
     renderer: Literal["unreal_mrq", "threejs_preview"] = "unreal_mrq"
@@ -25,7 +24,6 @@ class AvatarProfileResponse(BaseModel):
 
 
 class AvatarRenderRequest(BaseModel):
-    user_id: UUID
     avatar_profile_id: UUID
     source_asset_id: UUID
     source_start: float = Field(ge=0)

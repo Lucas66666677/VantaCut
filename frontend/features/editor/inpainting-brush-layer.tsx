@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, type PointerEvent } from "react";
 import { useOptimisticEffectsStore } from "@/features/editor/optimistic-effects-store";
+import { authenticatedFetch } from "@/lib/api/authenticated-fetch";
 
 type Point = { x: number; y: number };
 type BrushStroke = { points: Point[]; radius: number };
@@ -18,7 +19,7 @@ interface InpaintingBrushLayerProps {
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 /** Overlay this on the video preview: painted red pixels become the first-frame repair mask. */
-export function InpaintingBrushLayer({ mediaAssetId, userId, startTime, endTime, className, onQueued }: InpaintingBrushLayerProps) {
+export function InpaintingBrushLayer({ mediaAssetId, startTime, endTime, className, onQueued }: InpaintingBrushLayerProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [strokes, setStrokes] = useState<BrushStroke[]>([]);
   const [painting, setPainting] = useState(false);
@@ -69,9 +70,9 @@ export function InpaintingBrushLayer({ mediaAssetId, userId, startTime, endTime,
     setPending(true); setError(null);
     const optimisticId = beginOptimistic({ kind: "inpainting", mediaAssetId, message: "已先隱藏路人預覽，AI 正在補齊背景。" });
     try {
-      const response = await fetch(`${API_URL}/api/v1/media/${mediaAssetId}/inpaint`, {
+      const response = await authenticatedFetch(`${API_URL}/api/v1/media/${mediaAssetId}/inpaint`, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ user_id: userId, frame_time: (startTime + endTime) / 2, start_time: startTime, end_time: endTime, mask_strokes: strokes, use_proxy: true }),
+        body: JSON.stringify({ frame_time: (startTime + endTime) / 2, start_time: startTime, end_time: endTime, mask_strokes: strokes, use_proxy: true }),
       });
       const result = await response.json() as { task_id?: string; status_sse_path?: string; detail?: string };
       if (!response.ok || !result.task_id || !result.status_sse_path) throw new Error(result.detail ?? "無法建立路人消除任務");
