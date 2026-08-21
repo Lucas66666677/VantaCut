@@ -352,3 +352,6 @@ jobs:
       - name: Run wireless_cameras.py pairing route identity security tests
         working-directory: backend
         run: python -m pytest tests/test_wireless_camera_identity.py -v
+      - name: Run M3 core workspace route identity security tests
+        working-directory: backend
+        run: python -m pytest tests/test_m3_core_workspace_identity.py -v
