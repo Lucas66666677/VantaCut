@@ -5,7 +5,6 @@ from pydantic import BaseModel, Field
 
 
 class LongToShortsRequest(BaseModel):
-    user_id: UUID
     source_media_asset_id: UUID
     count: int = Field(default=3, ge=3, le=3)
     min_duration_seconds: float = Field(default=45, ge=30, le=60)
@@ -19,7 +18,6 @@ class LongToShortsResponse(BaseModel):
 
 
 class LongToShortsBatchRequest(BaseModel):
-    user_id: UUID
     resolution: Literal["720p", "1080p"] = "1080p"
 
 

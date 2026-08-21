@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent } from "react";
+import { authenticatedFetch } from "@/lib/api/authenticated-fetch";
 
 type Point = { x: number; y: number };
 type Annotation = { id: string; kind: "support" | "resistance"; p0: Point; p1: Point; p2: Point; p3: Point; label: string };
@@ -48,7 +49,7 @@ function drawChart(canvas: HTMLCanvasElement, candles: Candle[], annotations: An
   context.fillStyle = "#d4d4d8"; context.font = "12px sans-serif"; context.fillText(`最高 ${max.toFixed(2)}`, 4, top + 4); context.fillText(`最低 ${min.toFixed(2)}`, 4, bottom);
 }
 
-export function FinanceTrack({ timelineId, userId, apiBase = "/api/v1" }: { timelineId?: string; userId?: string; apiBase?: string }) {
+export function FinanceTrack({ timelineId, apiBase = "/api/v1" }: { timelineId?: string; userId?: string; apiBase?: string }) {
   const canvasRef = useRef<HTMLCanvasElement>(null); const animationRef = useRef<number | null>(null);
   const now = useMemo(() => new Date(), []); const [symbol, setSymbol] = useState("2353"); const [market, setMarket] = useState("twse");
   const [historyStart, setHistoryStart] = useState(formatDate(new Date(now.getTime() - 180 * 86400000))); const [historyEnd, setHistoryEnd] = useState(formatDate(now));
@@ -57,12 +58,12 @@ export function FinanceTrack({ timelineId, userId, apiBase = "/api/v1" }: { time
   const active = tracks.at(-1); const candles = active?.candles ?? [];
 
   const loadTracks = useCallback(async () => {
-    if (!timelineId || !userId) return;
-    const response = await fetch(`${apiBase}/timelines/${timelineId}/finance-tracks?user_id=${encodeURIComponent(userId)}`);
+    if (!timelineId) return;
+    const response = await authenticatedFetch(`${apiBase}/timelines/${timelineId}/finance-tracks`);
     if (!response.ok) throw new Error(await response.text());
     const payload = await response.json() as { tracks: FinanceTrackState[] };
     setTracks(payload.tracks); const latest = payload.tracks.at(-1); if (latest?.annotations) setAnnotations(latest.annotations);
-  }, [apiBase, timelineId, userId]);
+  }, [apiBase, timelineId]);
 
   useEffect(() => { void loadTracks().catch((error: unknown) => setMessage(`讀取金融軌道失敗：${error instanceof Error ? error.message : "未知錯誤"}`)); }, [loadTracks]);
   useEffect(() => {
@@ -77,17 +78,17 @@ export function FinanceTrack({ timelineId, userId, apiBase = "/api/v1" }: { time
   }, [annotations, candles]);
 
   const createTrack = async () => {
-    if (!timelineId || !userId) { setMessage("需要 timelineId 與 userId 才能建立金融軌道。"); return; }
+    if (!timelineId) { setMessage("需要 timelineId 才能建立金融軌道。"); return; }
     setMessage("正在排入市場資料與 K 線渲染工作…");
-    const response = await fetch(`${apiBase}/timelines/${timelineId}/finance-tracks`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ user_id: userId, symbol, market, history_start: historyStart, history_end: historyEnd, start_time: Number(timelineStart), end_time: Number(timelineEnd), annotations }) });
+    const response = await authenticatedFetch(`${apiBase}/timelines/${timelineId}/finance-tracks`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ symbol, market, history_start: historyStart, history_end: historyEnd, start_time: Number(timelineStart), end_time: Number(timelineEnd), annotations }) });
     if (!response.ok) { setMessage(`建立失敗：${await response.text()}`); return; }
     setMessage("金融軌道已排入工作佇列。"); await loadTracks();
   };
   const finishLine = async (end: Point) => {
     if (!drawing) return; const next: Annotation = { id: crypto.randomUUID(), kind, p0: drawing, p1: { x: drawing.x + (end.x - drawing.x) / 3, y: drawing.y }, p2: { x: drawing.x + 2 * (end.x - drawing.x) / 3, y: end.y }, p3: end, label: kind === "support" ? "Support" : "Resistance" };
     const updated = [...annotations, next]; setAnnotations(updated); setDrawing(null);
-    if (!timelineId || !userId || !active) return;
-    const response = await fetch(`${apiBase}/timelines/${timelineId}/finance-tracks/${active.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ user_id: userId, annotations: updated }) });
+    if (!timelineId || !active) return;
+    const response = await authenticatedFetch(`${apiBase}/timelines/${timelineId}/finance-tracks/${active.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ annotations: updated }) });
     setMessage(response.ok ? "支撐／壓力貝茲線已重新排入合成。" : `標記儲存失敗：${await response.text()}`); if (response.ok) await loadTracks();
   };
   const normalisedPoint = (event: PointerEvent<HTMLCanvasElement>): Point => { const rect = event.currentTarget.getBoundingClientRect(); return { x: Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width)), y: Math.min(1, Math.max(0, (event.clientY - rect.top) / rect.height)) }; };

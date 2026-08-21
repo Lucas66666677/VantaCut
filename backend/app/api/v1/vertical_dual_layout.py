@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
+from app.auth.dependencies import get_current_user
 from app.models.entities import MediaAsset, Timeline, User
 from app.schemas.vertical_dual_layout import VerticalDualLayoutRequest, VerticalDualLayoutResponse
 from app.tasks.vertical_dual_layout_tasks import analyze_vertical_dual_layout_task
@@ -24,10 +25,10 @@ def _timeline_source_asset_id(timeline: Timeline) -> UUID | None:
 
 
 @router.post("/{timeline_id}/vertical-dual-layout", response_model=VerticalDualLayoutResponse, status_code=status.HTTP_202_ACCEPTED)
-def configure_vertical_dual_layout(timeline_id: UUID, payload: VerticalDualLayoutRequest, db: Session = Depends(get_db)) -> VerticalDualLayoutResponse:
-    timeline, user = db.get(Timeline, timeline_id), db.get(User, payload.user_id)
+def configure_vertical_dual_layout(timeline_id: UUID, payload: VerticalDualLayoutRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> VerticalDualLayoutResponse:
+    timeline = db.get(Timeline, timeline_id)
     if timeline is None: raise HTTPException(status_code=404, detail="Timeline not found")
-    if user is None or timeline.project.owner_id != user.id: raise HTTPException(status_code=403, detail="User cannot modify this timeline")
+    if timeline.project.owner_id != current_user.id: raise HTTPException(status_code=403, detail="User cannot modify this timeline")
     source_id = payload.source_asset_id or _timeline_source_asset_id(timeline)
     source = db.get(MediaAsset, source_id) if source_id else None
     if source is None or source.project_id != timeline.project_id:

@@ -5,7 +5,6 @@ from pydantic import BaseModel, Field
 
 
 class TalkingHeadConfidenceRequest(BaseModel):
-    user_id: UUID
     source_asset_id: UUID
     confidence_threshold: int = Field(default=58, ge=35, le=85)
     enable_gaze_correction: bool = False

@@ -1,18 +1,19 @@
 "use client";
 
 import { useState } from "react";
+import { authenticatedFetch } from "@/lib/api/authenticated-fetch";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 interface VerticalDualLayoutPanelProps { timelineId: string; userId: string; sourceAssetId?: string; }
 
-export function VerticalDualLayoutPanel({ timelineId, userId, sourceAssetId }: VerticalDualLayoutPanelProps) {
+export function VerticalDualLayoutPanel({ timelineId, sourceAssetId }: VerticalDualLayoutPanelProps) {
   const [topRatio, setTopRatio] = useState(43); const [pending, setPending] = useState(false); const [message, setMessage] = useState<string | null>(null);
   const create = async () => {
     if (!sourceAssetId) { setMessage("時間軸中找不到可用的主影片素材。"); return; }
     setPending(true); setMessage(null);
     try {
-      const response = await fetch(`${API_URL}/api/v1/timelines/${timelineId}/vertical-dual-layout`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ user_id: userId, source_asset_id: sourceAssetId, top_ratio: topRatio / 100, max_samples: 48 }) });
+      const response = await authenticatedFetch(`${API_URL}/api/v1/timelines/${timelineId}/vertical-dual-layout`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ source_asset_id: sourceAssetId, top_ratio: topRatio / 100, max_samples: 48 }) });
       const payload = await response.json() as { detail?: string };
       if (!response.ok) throw new Error(payload.detail ?? "無法建立雙畫面分析任務");
       setMessage("AI 正在找尋人臉與遊戲焦點；完成後導出會自動轉為直式雙畫面。");
