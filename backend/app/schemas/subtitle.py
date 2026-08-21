@@ -47,7 +47,6 @@ class SubtitleGenerationResponse(BaseModel):
 
 
 class GenerateBilingualSubtitlesRequest(BaseModel):
-    user_id: UUID
     target_language: str = Field(default="en", min_length=2, max_length=20)
     source_language: str | None = Field(default=None, max_length=20)
 
@@ -60,6 +59,5 @@ class SubtitleExportResponse(BaseModel):
 
 
 class CaptionStyleRequest(BaseModel):
-    user_id: UUID
     preset: Literal["viral_yellow", "karaoke_pop", "clean_white"] = "viral_yellow"
     aspect_ratio: Literal["9:16", "16:9"] = "9:16"

@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
+from app.auth.dependencies import get_current_user
 from app.models.entities import MediaAsset, Timeline, User
 from app.schemas.subtitle import CaptionStyleRequest, GenerateBilingualSubtitlesRequest, GenerateSubtitlesRequest, SubtitleCue, SubtitleExportResponse, SubtitleGenerationResponse
 from app.services.storage import create_download_url, upload_bytes
@@ -19,12 +20,15 @@ router = APIRouter(prefix="/timelines", tags=["subtitles"])
 def request_subtitle_generation(
     timeline_id: UUID,
     payload: GenerateSubtitlesRequest,
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> SubtitleGenerationResponse:
     timeline = db.get(Timeline, timeline_id)
     asset = db.get(MediaAsset, payload.source_asset_id)
     if timeline is None:
         raise HTTPException(status_code=404, detail="Timeline not found")
+    if timeline.project.owner_id != current_user.id:
+        raise HTTPException(status_code=403, detail="User cannot modify this timeline")
     if asset is None or asset.project_id != timeline.project_id:
         raise HTTPException(status_code=400, detail="Source asset does not belong to this timeline project")
     if not any(segment.action == "keep" for segment in payload.segments):
@@ -46,12 +50,12 @@ def request_subtitle_generation(
 
 @router.post("/{timeline_id}/generate-bilingual-subtitles", response_model=SubtitleGenerationResponse, status_code=status.HTTP_202_ACCEPTED)
 def request_bilingual_subtitle_generation(
-    timeline_id: UUID, payload: GenerateBilingualSubtitlesRequest, db: Session = Depends(get_db),
+    timeline_id: UUID, payload: GenerateBilingualSubtitlesRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db),
 ) -> SubtitleGenerationResponse:
-    timeline, user = db.get(Timeline, timeline_id), db.get(User, payload.user_id)
+    timeline = db.get(Timeline, timeline_id)
     if timeline is None:
         raise HTTPException(status_code=404, detail="Timeline not found")
-    if user is None or timeline.project.owner_id != user.id:
+    if timeline.project.owner_id != current_user.id:
         raise HTTPException(status_code=403, detail="User cannot modify this timeline")
     if dict(timeline.settings_json.get("subtitles", {})).get("status") != "completed":
         raise HTTPException(status_code=409, detail="Generate source subtitles before translating")
@@ -61,13 +65,13 @@ def request_bilingual_subtitle_generation(
 
 @router.get("/{timeline_id}/bilingual-subtitles/export", response_model=SubtitleExportResponse)
 def get_bilingual_subtitle_export(
-    timeline_id: UUID, user_id: UUID, format: Literal["srt", "vtt"], track: Literal["bilingual", "source", "target"],
+    timeline_id: UUID, format: Literal["srt", "vtt"], track: Literal["bilingual", "source", "target"], current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> SubtitleExportResponse:
-    timeline, user = db.get(Timeline, timeline_id), db.get(User, user_id)
+    timeline = db.get(Timeline, timeline_id)
     if timeline is None:
         raise HTTPException(status_code=404, detail="Timeline not found")
-    if user is None or timeline.project.owner_id != user.id:
+    if timeline.project.owner_id != current_user.id:
         raise HTTPException(status_code=403, detail="User cannot access this timeline")
     bilingual = dict(timeline.settings_json.get("bilingual_subtitles") or {})
     key = bilingual.get(f"{track}_{format}_key")
@@ -78,11 +82,11 @@ def get_bilingual_subtitle_export(
 
 
 @router.put("/{timeline_id}/caption-style")
-def update_caption_style(timeline_id: UUID, payload: CaptionStyleRequest, db: Session = Depends(get_db)) -> dict[str, object]:
-    timeline, user = db.get(Timeline, timeline_id), db.get(User, payload.user_id)
+def update_caption_style(timeline_id: UUID, payload: CaptionStyleRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> dict[str, object]:
+    timeline = db.get(Timeline, timeline_id)
     if timeline is None:
         raise HTTPException(status_code=404, detail="Timeline not found")
-    if user is None or timeline.project.owner_id != user.id:
+    if timeline.project.owner_id != current_user.id:
         raise HTTPException(status_code=403, detail="User cannot modify this timeline")
     subtitles = dict(timeline.settings_json.get("subtitles", {}))
     if subtitles.get("status") != "completed":

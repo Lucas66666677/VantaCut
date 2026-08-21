@@ -5,12 +5,10 @@ from pydantic import BaseModel, Field
 
 
 class RecommendStickersRequest(BaseModel):
-    user_id: UUID
     enabled: bool = True
 
 
 class ToggleAIStickersRequest(BaseModel):
-    user_id: UUID
     enabled: bool
 
 
@@ -22,7 +20,6 @@ class StickerTransform(BaseModel):
 
 
 class StickerTransformRequest(BaseModel):
-    user_id: UUID
     transform: StickerTransform
     source: Literal["ai", "user"] = "user"
 

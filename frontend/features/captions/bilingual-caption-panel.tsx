@@ -3,6 +3,7 @@
 import { useState } from "react";
 
 import { BilingualCaptionCanvas, type BilingualCaptionCue } from "@/features/captions/bilingual-caption-canvas";
+import { authenticatedFetch } from "@/lib/api/authenticated-fetch";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 const LANGUAGES = [{ id: "en", label: "English" }, { id: "ja", label: "日本語" }, { id: "es", label: "Español" }];
@@ -16,7 +17,7 @@ interface BilingualCaptionPanelProps {
   previewHeight?: number;
 }
 
-export function BilingualCaptionPanel({ timelineId, userId, cues, currentTimeMs, previewWidth = 270, previewHeight = 480 }: BilingualCaptionPanelProps) {
+export function BilingualCaptionPanel({ timelineId, cues, currentTimeMs, previewWidth = 270, previewHeight = 480 }: BilingualCaptionPanelProps) {
   const [targetLanguage, setTargetLanguage] = useState("en");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -24,9 +25,9 @@ export function BilingualCaptionPanel({ timelineId, userId, cues, currentTimeMs,
   const generate = async () => {
     setPending(true); setError(null);
     try {
-      const response = await fetch(`${API_URL}/api/v1/timelines/${timelineId}/generate-bilingual-subtitles`, {
+      const response = await authenticatedFetch(`${API_URL}/api/v1/timelines/${timelineId}/generate-bilingual-subtitles`, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ user_id: userId, target_language: targetLanguage }),
+        body: JSON.stringify({ target_language: targetLanguage }),
       });
       const body = await response.json() as { detail?: string };
       if (!response.ok) throw new Error(body.detail ?? "無法建立雙語字幕任務");
@@ -35,10 +36,13 @@ export function BilingualCaptionPanel({ timelineId, userId, cues, currentTimeMs,
     } finally { setPending(false); }
   };
 
-  const download = (format: "srt" | "vtt", track: "bilingual" | "source" | "target") => {
+  const download = async (format: "srt" | "vtt", track: "bilingual" | "source" | "target") => {
     const url = new URL(`${API_URL}/api/v1/timelines/${timelineId}/bilingual-subtitles/export`);
-    url.searchParams.set("user_id", userId); url.searchParams.set("format", format); url.searchParams.set("track", track);
-    window.open(url.toString(), "_blank", "noopener,noreferrer");
+    url.searchParams.set("format", format); url.searchParams.set("track", track);
+    const response = await authenticatedFetch(url.toString());
+    if (!response.ok) { setError("無法下載雙語字幕"); return; }
+    const objectUrl = URL.createObjectURL(await response.blob());
+    const anchor = document.createElement("a"); anchor.href = objectUrl; anchor.download = `${timelineId}-${track}.${format}`; anchor.click(); URL.revokeObjectURL(objectUrl);
   };
 
   return <section className="rounded-xl border border-sky-700/60 bg-slate-950 p-4 text-slate-100">
@@ -48,7 +52,7 @@ export function BilingualCaptionPanel({ timelineId, userId, cues, currentTimeMs,
       <BilingualCaptionCanvas cues={cues} currentTimeMs={currentTimeMs} width={previewWidth} height={previewHeight} />
     </div>
     <div className="mt-3 flex gap-2"><select aria-label="翻譯目標語言" value={targetLanguage} onChange={(event) => setTargetLanguage(event.target.value)} className="flex-1 rounded bg-slate-800 px-3 py-2 text-sm">{LANGUAGES.map((language) => <option key={language.id} value={language.id}>{language.label}</option>)}</select><button type="button" onClick={() => void generate()} disabled={pending || !cues.length} className="rounded bg-sky-500 px-3 py-2 text-sm font-semibold text-slate-950 disabled:opacity-50">{pending ? "翻譯中…" : "一鍵生成"}</button></div>
-    <div className="mt-3 grid grid-cols-3 gap-2 text-xs"><button type="button" onClick={() => download("srt", "bilingual")} className="rounded border border-slate-700 py-2 hover:bg-slate-800">雙語 SRT</button><button type="button" onClick={() => download("vtt", "source")} className="rounded border border-slate-700 py-2 hover:bg-slate-800">母語 VTT</button><button type="button" onClick={() => download("vtt", "target")} className="rounded border border-slate-700 py-2 hover:bg-slate-800">外語 VTT</button></div>
+    <div className="mt-3 grid grid-cols-3 gap-2 text-xs"><button type="button" onClick={() => void download("srt", "bilingual")} className="rounded border border-slate-700 py-2 hover:bg-slate-800">雙語 SRT</button><button type="button" onClick={() => void download("vtt", "source")} className="rounded border border-slate-700 py-2 hover:bg-slate-800">母語 VTT</button><button type="button" onClick={() => void download("vtt", "target")} className="rounded border border-slate-700 py-2 hover:bg-slate-800">外語 VTT</button></div>
     {error && <p role="alert" className="mt-2 text-xs text-rose-300">{error}</p>}
   </section>;
 }

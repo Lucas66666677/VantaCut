@@ -1,19 +1,20 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { authenticatedFetch } from "@/lib/api/authenticated-fetch";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 type Status = "idle" | "queued" | "processing" | "completed" | "failed";
 interface MemeEvent { id: string; reason: string; timeline_start: number; status: "ready" | "suggested"; source_url?: string; error?: string; }
 
 /** Server-side GIF discovery keeps API keys private and leaves every proposed insert reviewable. */
-export function MemeGifPanel({ timelineId, userId, sourceAssetId }: { timelineId: string; userId: string; sourceAssetId?: string }) {
+export function MemeGifPanel({ timelineId, sourceAssetId }: { timelineId: string; userId: string; sourceAssetId?: string }) {
   const [record, setRecord] = useState<{ status: Status; events: MemeEvent[]; error?: string }>({ status: "idle", events: [] });
   const refresh = async () => {
-    const response = await fetch(`${API_URL}/api/v1/timelines/${timelineId}/meme-gifs?user_id=${encodeURIComponent(userId)}`);
+    const response = await authenticatedFetch(`${API_URL}/api/v1/timelines/${timelineId}/meme-gifs`);
     if (response.ok) setRecord(await response.json() as { status: Status; events: MemeEvent[]; error?: string });
   };
-  useEffect(() => { void refresh(); }, [timelineId, userId]);
+  useEffect(() => { void refresh(); }, [timelineId]);
   useEffect(() => {
     if (record.status !== "queued" && record.status !== "processing") return;
     const timer = window.setInterval(() => void refresh(), 2500);
@@ -22,9 +23,9 @@ export function MemeGifPanel({ timelineId, userId, sourceAssetId }: { timelineId
   const generate = async () => {
     if (!sourceAssetId) return;
     setRecord({ status: "queued", events: [] });
-    const response = await fetch(`${API_URL}/api/v1/timelines/${timelineId}/meme-gifs`, {
+    const response = await authenticatedFetch(`${API_URL}/api/v1/timelines/${timelineId}/meme-gifs`, {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ user_id: userId, source_asset_id: sourceAssetId, provider: "auto", insertion_mode: "overlay", max_events: 4 }),
+      body: JSON.stringify({ source_asset_id: sourceAssetId, provider: "auto", insertion_mode: "overlay", max_events: 4 }),
     });
     if (!response.ok) {
       const body = await response.json() as { detail?: string };
