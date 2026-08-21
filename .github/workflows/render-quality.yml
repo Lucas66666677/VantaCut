@@ -41,8 +41,19 @@ jobs:
       - name: Wait for services
         run: |
           for url in http://127.0.0.1:8000/health http://127.0.0.1:3000; do
-            for attempt in {1..60}; do curl --fail --silent "$url" && break || sleep 2; done
-            curl --fail --silent "$url"
+            ready=false
+            for attempt in {1..60}; do
+              if curl --fail --silent --show-error "$url" > /dev/null; then
+                ready=true
+                break
+              fi
+              sleep 2
+            done
+            if [ "$ready" != true ]; then
+              echo "Service did not become ready: $url" >&2
+              docker compose ps --all
+              exit 1
+            fi
           done
           curl --fail --silent http://127.0.0.1:8089/__admin/mappings
       - name: Seed a deterministic source, subtitle fixture, and golden render
@@ -87,6 +98,12 @@ jobs:
           docker cp artifacts/rendered-from-browser.mp4 "$backend_id:/tmp/qa/rendered.mp4"
           docker compose exec -T backend python /tmp/video_quality_gate.py --expected /tmp/qa/ground-truth.mp4 --actual /tmp/qa/rendered.mp4 --critical-times 0.35,1.0,1.55,2.05 --report /tmp/qa/quality-report.json --max-av-delay-ms 50
           docker cp "$backend_id:/tmp/qa/quality-report.json" artifacts/quality-report.json
+      - name: Collect container logs on failure
+        if: failure()
+        run: |
+          mkdir -p artifacts
+          docker compose ps --all > artifacts/docker-compose-ps.log
+          docker compose logs --no-color > artifacts/docker-compose.log
       - name: Upload diagnostics
         if: always()
         uses: actions/upload-artifact@v4
@@ -96,9 +113,6 @@ jobs:
             artifacts/
             frontend/playwright-report/
             frontend/test-results/
-      - name: Collect container logs on failure
-        if: failure()
-        run: docker compose logs --no-color > artifacts/docker-compose.log
       - name: Tear down integration stack
         if: always()
         run: docker compose down -v
