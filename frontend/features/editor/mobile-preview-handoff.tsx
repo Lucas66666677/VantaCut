@@ -1,17 +1,18 @@
 "use client";
 
 import { useState } from "react";
+import { authenticatedFetch } from "@/lib/api/authenticated-fetch";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 interface HandoffResponse { preview_url: string; qr_code_data_uri: string; expires_at: string; detail?: string; }
 
-export function MobilePreviewHandoff({ timelineId, userId }: { timelineId: string; userId: string }) {
+export function MobilePreviewHandoff({ timelineId }: { timelineId: string; userId: string }) {
   const [handoff, setHandoff] = useState<HandoffResponse | null>(null); const [pending, setPending] = useState(false); const [error, setError] = useState<string | null>(null);
   const create = async () => {
     setPending(true); setError(null);
     try {
-      const response = await fetch(`${API_URL}/api/v1/timelines/${timelineId}/mobile-preview-handoff`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ user_id: userId }) });
+      const response = await authenticatedFetch(`${API_URL}/api/v1/timelines/${timelineId}/mobile-preview-handoff`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) });
       const data = await response.json() as HandoffResponse;
       if (!response.ok) throw new Error(data.detail ?? "無法建立手機預覽"); setHandoff(data);
     } catch (cause) { setError(cause instanceof Error ? cause.message : "無法建立手機預覽"); } finally { setPending(false); }
