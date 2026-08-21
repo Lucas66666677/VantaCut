@@ -16,7 +16,6 @@ class ColorFilterPresetListResponse(BaseModel):
 
 
 class ApplyColorFilterRequest(BaseModel):
-    user_id: UUID
     preset_id: str
     intensity: int = Field(default=100, ge=0, le=100, description="Blend percentage from 0 to 100")
 
@@ -28,7 +27,6 @@ class ApplyColorFilterResponse(BaseModel):
 
 
 class CreateColorMatchRequest(BaseModel):
-    user_id: UUID
     reference_image_asset_id: UUID
     source_asset_id: UUID | None = None
     intensity: int = Field(default=100, ge=0, le=100)

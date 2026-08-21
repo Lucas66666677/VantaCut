@@ -3,12 +3,13 @@
 import { useEffect, useRef, useState } from "react";
 
 import { useTimelineStore, type NudgeCommandInput } from "@/features/editor/timeline-store";
+import { authenticatedFetch } from "@/lib/api/authenticated-fetch";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
 
 interface NudgeResponse { commands: NudgeCommandInput[]; explanation: string; }
 
-export function NudgeCommandBar({ timelineId, userId }: { timelineId?: string; userId?: string }) {
+export function NudgeCommandBar({ timelineId }: { timelineId?: string; userId?: string }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [instruction, setInstruction] = useState("");
   const [pending, setPending] = useState(false);
@@ -32,12 +33,12 @@ export function NudgeCommandBar({ timelineId, userId }: { timelineId?: string; u
 
   const submit = async () => {
     const value = instruction.trim();
-    if (!value || !timelineId || !userId || !targetClipIds.length) return;
+    if (!value || !timelineId || !targetClipIds.length) return;
     setPending(true); setError(null);
     try {
-      const response = await fetch(`${API_BASE_URL}/api/v1/timelines/${timelineId}/nudge`, {
+      const response = await authenticatedFetch(`${API_BASE_URL}/api/v1/timelines/${timelineId}/nudge`, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ user_id: userId, instruction: value, target_clip_ids: targetClipIds }),
+        body: JSON.stringify({ instruction: value, target_clip_ids: targetClipIds }),
       });
       const result = await response.json() as NudgeResponse & { detail?: string };
       if (!response.ok) throw new Error(result.detail ?? "無法理解這個微調指令");
@@ -53,7 +54,7 @@ export function NudgeCommandBar({ timelineId, userId }: { timelineId?: string; u
       <span className="grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-violet-400/15 text-sm text-violet-100">✦</span>
       <input ref={inputRef} value={instruction} onChange={(event) => setInstruction(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void submit(); }} placeholder="例如：讓這段看起來更有活力一點" className="min-w-0 flex-1 bg-transparent px-1 text-sm text-zinc-100 outline-none placeholder:text-zinc-500" aria-label="AI 微調指令" />
       <span className="hidden rounded border border-zinc-700 px-1.5 py-0.5 text-[10px] text-zinc-500 sm:block">⌘ K</span>
-      <button type="button" disabled={pending || !instruction.trim() || !timelineId || !userId || !targetClipIds.length} onClick={() => void submit()} className="rounded-xl bg-violet-300 px-3 py-2 text-xs font-bold text-zinc-950 disabled:cursor-not-allowed disabled:opacity-40">{pending ? "理解中…" : "微調"}</button>
+      <button type="button" disabled={pending || !instruction.trim() || !timelineId || !targetClipIds.length} onClick={() => void submit()} className="rounded-xl bg-violet-300 px-3 py-2 text-xs font-bold text-zinc-950 disabled:cursor-not-allowed disabled:opacity-40">{pending ? "理解中…" : "微調"}</button>
     </div>
     <p className="mt-1 px-2 text-[11px] text-zinc-500">{selectedClipId ? "套用至目前選取片段" : "未選取片段：會套用至所有保留的主軌片段"} · 只建立可撤銷的非破壞性設定</p>
     {error && <p className="mt-1 px-2 text-xs text-red-300">{error}</p>}

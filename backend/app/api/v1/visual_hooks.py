@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
+from app.auth.dependencies import get_current_user
 from app.models.entities import Timeline, User
 from app.schemas.visual_hooks import VisualHooksRequest, VisualHooksResponse
 from app.services.hook_detector import analyze_opening_hook
@@ -23,11 +24,11 @@ def _duration(document: dict[str, object]) -> float:
 
 
 @router.put("/{timeline_id}/visual-hooks", response_model=VisualHooksResponse)
-def configure_visual_hooks(timeline_id: UUID, payload: VisualHooksRequest, db: Session = Depends(get_db)) -> VisualHooksResponse:
-    timeline, user = db.get(Timeline, timeline_id), db.get(User, payload.user_id)
+def configure_visual_hooks(timeline_id: UUID, payload: VisualHooksRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> VisualHooksResponse:
+    timeline = db.get(Timeline, timeline_id)
     if timeline is None:
         raise HTTPException(status_code=404, detail="Timeline not found")
-    if user is None or timeline.project.owner_id != user.id:
+    if timeline.project.owner_id != current_user.id:
         raise HTTPException(status_code=403, detail="User cannot modify this timeline")
     settings = dict(timeline.settings_json or {}); document = dict(settings.get("confirmed_timeline", {})); duration = _duration(document)
     if duration <= 0:

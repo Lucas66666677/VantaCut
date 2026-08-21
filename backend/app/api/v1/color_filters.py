@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
+from app.auth.dependencies import get_current_user
 from app.models.entities import MediaAsset, MediaStatus, MediaType, Timeline, User
 from app.schemas.color_filters import (
     ApplyColorFilterRequest,
@@ -30,12 +31,12 @@ def list_color_filter_presets() -> ColorFilterPresetListResponse:
 
 @router.put("/{timeline_id}/color-filter", response_model=ApplyColorFilterResponse)
 def apply_color_filter(
-    timeline_id: UUID, payload: ApplyColorFilterRequest, db: Session = Depends(get_db)
+    timeline_id: UUID, payload: ApplyColorFilterRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)
 ) -> ApplyColorFilterResponse:
-    timeline, user = db.get(Timeline, timeline_id), db.get(User, payload.user_id)
+    timeline = db.get(Timeline, timeline_id)
     if timeline is None:
         raise HTTPException(status_code=404, detail="Timeline not found")
-    if user is None or timeline.project.owner_id != user.id:
+    if timeline.project.owner_id != current_user.id:
         raise HTTPException(status_code=403, detail="User cannot modify this timeline")
     try:
         preset = get_preset_lut(payload.preset_id)
@@ -73,12 +74,12 @@ def _timeline_source_asset_id(timeline: Timeline) -> str | None:
 
 @router.post("/{timeline_id}/color-match", response_model=CreateColorMatchResponse)
 def create_color_match(
-    timeline_id: UUID, payload: CreateColorMatchRequest, db: Session = Depends(get_db)
+    timeline_id: UUID, payload: CreateColorMatchRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)
 ) -> CreateColorMatchResponse:
-    timeline, user = db.get(Timeline, timeline_id), db.get(User, payload.user_id)
+    timeline = db.get(Timeline, timeline_id)
     if timeline is None:
         raise HTTPException(status_code=404, detail="Timeline not found")
-    if user is None or timeline.project.owner_id != user.id:
+    if timeline.project.owner_id != current_user.id:
         raise HTTPException(status_code=403, detail="User cannot modify this timeline")
     reference = db.get(MediaAsset, payload.reference_image_asset_id)
     source_id = payload.source_asset_id or _timeline_source_asset_id(timeline)

@@ -5,7 +5,6 @@ from pydantic import BaseModel
 
 
 class VisualHooksRequest(BaseModel):
-    user_id: UUID
     enabled: bool = True
     style: Literal["gradient_line", "liquid_fill", "border_marquee"] = "gradient_line"
     platform: Literal["tiktok", "instagram_reels", "youtube_shorts"] = "tiktok"

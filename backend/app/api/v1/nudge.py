@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.ai.providers.base import TextAnalysisProvider
 from app.ai.providers.factory import get_text_provider
 from app.db.session import get_db
+from app.auth.dependencies import get_current_user
 from app.models.entities import Timeline, User
 from app.schemas.nudge import NudgeRequest, NudgeResponse
 from app.services.non_destructive import append_filter_layer
@@ -25,15 +26,16 @@ def text_provider_dependency() -> TextAnalysisProvider:
 def nudge_timeline(
     timeline_id: UUID,
     payload: NudgeRequest,
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-    provider: TextAnalysisProvider = Depends(text_provider_dependency),
 ) -> NudgeResponse:
-    timeline, user = db.get(Timeline, timeline_id), db.get(User, payload.user_id)
+    timeline = db.get(Timeline, timeline_id)
     if timeline is None:
         raise HTTPException(status_code=404, detail="Timeline not found")
-    if user is None or timeline.project.owner_id != user.id:
+    if timeline.project.owner_id != current_user.id:
         raise HTTPException(status_code=403, detail="User cannot modify this timeline")
 
+    provider = text_provider_dependency()
     commands, explanation, provider_name = plan_nudge(provider, instruction=payload.instruction, target_clip_ids=payload.target_clip_ids)
     if not commands:
         return NudgeResponse(timeline_id=timeline.id, provider_name=provider_name, commands=[], explanation=explanation)
