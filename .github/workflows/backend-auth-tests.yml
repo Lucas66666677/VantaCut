@@ -454,3 +454,6 @@ jobs:
       - name: Run M12 review and social timestamp schema regression tests
         working-directory: backend
         run: python -m pytest tests/test_m12_review_social_schema.py -v
+      - name: Run M13 live-session ownership security tests
+        working-directory: backend
+        run: python -m pytest tests/test_m13_live_session_identity.py -v

@@ -8,7 +8,6 @@ from pydantic import BaseModel, Field, model_validator
 
 
 class CreateLiveSessionRequest(BaseModel):
-    user_id: UUID
     project_id: UUID
     title: str = Field(min_length=1, max_length=160)
     output_rtmp_url: str | None = Field(
