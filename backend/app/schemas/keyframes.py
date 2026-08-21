@@ -46,7 +46,6 @@ class ClipTransformAnimation(BaseModel):
 
 
 class TimelineKeyframeUpdateRequest(BaseModel):
-    user_id: UUID
     animations: list[ClipTransformAnimation] = Field(min_length=1, max_length=100)
 
 

@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
+from app.auth.dependencies import get_current_user
 from app.models.entities import Timeline, User
 from app.schemas.speed_curves import TimelineSpeedCurveUpdateRequest, TimelineSpeedCurveUpdateResponse
 
@@ -12,11 +13,11 @@ router = APIRouter(prefix="/timelines", tags=["speed-curves"])
 
 
 @router.put("/{timeline_id}/speed-curves", response_model=TimelineSpeedCurveUpdateResponse)
-def update_speed_curves(timeline_id: UUID, payload: TimelineSpeedCurveUpdateRequest, db: Session = Depends(get_db)) -> TimelineSpeedCurveUpdateResponse:
-    timeline, user = db.get(Timeline, timeline_id), db.get(User, payload.user_id)
+def update_speed_curves(timeline_id: UUID, payload: TimelineSpeedCurveUpdateRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> TimelineSpeedCurveUpdateResponse:
+    timeline = db.get(Timeline, timeline_id)
     if timeline is None:
         raise HTTPException(status_code=404, detail="Timeline not found")
-    if user is None or timeline.project.owner_id != user.id:
+    if timeline.project.owner_id != current_user.id:
         raise HTTPException(status_code=403, detail="User cannot modify this timeline")
     # Inspector saves one clip at a time; merge so editing Clip B never erases Clip A's curve.
     existing = dict(dict(timeline.settings_json or {}).get("speed_curves", {}))

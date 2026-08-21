@@ -8,6 +8,7 @@ import type { TimelineClip } from "@/types/timeline";
 import { KeyframeGraphEditor } from "@/features/editor/keyframe-graph-editor";
 import { useKeyframeLivePreviewStore } from "@/features/editor/keyframe-live-preview-store";
 import { evaluateTransformAt } from "@/types/keyframes";
+import { authenticatedFetch } from "@/lib/api/authenticated-fetch";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
 const FIELDS = [
@@ -56,13 +57,11 @@ export function KeyframeEditor({ clip, timelineId }: KeyframeEditorProps) {
   };
   const save = async () => {
     if (!timelineId || !isPersistable) return;
-    const userId = window.localStorage.getItem("user_id");
-    if (!userId) { setError("尚未取得登入使用者，無法儲存關鍵幀。"); return; }
     setIsSaving(true); setError(null);
     try {
-      const response = await fetch(`${API_BASE_URL}/api/v1/timelines/${timelineId}/keyframes`, {
+      const response = await authenticatedFetch(`${API_BASE_URL}/api/v1/timelines/${timelineId}/keyframes`, {
         method: "PUT", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ user_id: userId, animations: [current] }),
+        body: JSON.stringify({ animations: [current] }),
       });
       if (!response.ok) throw new Error("儲存關鍵幀失敗");
     } catch (requestError) {

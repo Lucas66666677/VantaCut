@@ -30,7 +30,6 @@ class TransitionSpec(BaseModel):
 
 
 class TimelineTransitionsRequest(BaseModel):
-    user_id: UUID
     transitions: list[TransitionSpec] = Field(default_factory=list, max_length=100)
 
 

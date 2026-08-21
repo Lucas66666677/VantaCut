@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { COLOR_FILTER_PRESETS, drawPresetFilter, type PresetFilterId } from "@/features/editor/preset-filter-canvas";
 import { useOptimisticEffectsStore } from "@/features/editor/optimistic-effects-store";
+import { authenticatedFetch } from "@/lib/api/authenticated-fetch";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -21,7 +22,7 @@ interface ColorFilterPanelProps {
   onReverted?: () => void;
 }
 
-export function ColorFilterPanel({ timelineId, userId, previewSource, previewFrameVersion = 0, clipId, mediaAssetId, className = "", onApplied, onReverted }: ColorFilterPanelProps) {
+export function ColorFilterPanel({ timelineId, previewSource, previewFrameVersion = 0, clipId, mediaAssetId, className = "", onApplied, onReverted }: ColorFilterPanelProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [selected, setSelected] = useState<PresetFilterId>("vintage_film");
   const [hovered, setHovered] = useState<PresetFilterId | null>(null);
@@ -46,7 +47,7 @@ export function ColorFilterPanel({ timelineId, userId, previewSource, previewFra
     const optimisticId = beginOptimistic({ kind: "filter", clipId, mediaAssetId, message: `${activeDefinition.name} 已先套用預覽。` });
     setPending(true); setError(null); setSaved(true); onApplied?.(selection);
     try {
-      const response = await fetch(`${API_URL}/api/v1/timelines/${timelineId}/color-filter`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ user_id: userId, preset_id: selected, intensity }) });
+      const response = await authenticatedFetch(`${API_URL}/api/v1/timelines/${timelineId}/color-filter`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ preset_id: selected, intensity }) });
       const payload = await response.json() as { detail?: string };
       if (!response.ok) throw new Error(payload.detail ?? "無法套用濾鏡");
       completeOptimistic(optimisticId, `${activeDefinition.name} 已完成同步。`);

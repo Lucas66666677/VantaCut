@@ -16,7 +16,6 @@ class NudgeCommand(BaseModel):
 
 
 class NudgeRequest(BaseModel):
-    user_id: UUID
     instruction: str = Field(min_length=1, max_length=600)
     target_clip_ids: list[str] = Field(default_factory=list, max_length=100)
 

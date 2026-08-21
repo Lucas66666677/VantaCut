@@ -11,7 +11,6 @@ class TimeSeriesPoint(BaseModel):
 
 
 class DataChartRequest(BaseModel):
-    user_id: UUID
     title: str = Field(default="Market trend", min_length=1, max_length=120)
     points: list[TimeSeriesPoint] = Field(min_length=2, max_length=5000)
     start_time: float = Field(ge=0)

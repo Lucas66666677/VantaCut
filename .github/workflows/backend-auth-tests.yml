@@ -146,6 +146,22 @@ on:
       - "backend/app/schemas/meme_gifs.py"
       - "backend/app/schemas/interactive.py"
       - "backend/tests/test_m5_interactive_content_identity.py"
+      # M6 mechanical migration: editor effects and timeline controls
+      - "backend/app/api/v1/color_filters.py"
+      - "backend/app/api/v1/data_charts.py"
+      - "backend/app/api/v1/keyframes.py"
+      - "backend/app/api/v1/nudge.py"
+      - "backend/app/api/v1/speed_curves.py"
+      - "backend/app/api/v1/transitions.py"
+      - "backend/app/api/v1/visual_hooks.py"
+      - "backend/app/schemas/color_filters.py"
+      - "backend/app/schemas/data_charts.py"
+      - "backend/app/schemas/keyframes.py"
+      - "backend/app/schemas/nudge.py"
+      - "backend/app/schemas/speed_curves.py"
+      - "backend/app/schemas/transitions.py"
+      - "backend/app/schemas/visual_hooks.py"
+      - "backend/tests/test_m6_editor_effects_identity.py"
       - ".github/workflows/backend-auth-tests.yml"
   push:
     branches: [main]
@@ -395,3 +411,6 @@ jobs:
       - name: Run M5 interactive content route identity security tests
         working-directory: backend
         run: python -m pytest tests/test_m5_interactive_content_identity.py -v
+      - name: Run M6 editor effects route identity security tests
+        working-directory: backend
+        run: python -m pytest tests/test_m6_editor_effects_identity.py -v

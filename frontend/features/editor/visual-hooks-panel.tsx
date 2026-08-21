@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { authenticatedFetch } from "@/lib/api/authenticated-fetch";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 type Style = "gradient_line" | "liquid_fill" | "border_marquee";
@@ -9,12 +10,12 @@ type Platform = "tiktok" | "instagram_reels" | "youtube_shorts";
 const labels: Record<Style, string> = { gradient_line: "漸層進度線", liquid_fill: "底部液體填充", border_marquee: "邊框跑馬燈" };
 
 /** Safe-zone-aware preview and one-click persistence for retention-focused visual hooks. */
-export function VisualHooksPanel({ timelineId, userId }: { timelineId: string; userId: string }) {
+export function VisualHooksPanel({ timelineId }: { timelineId: string; userId: string }) {
   const [style, setStyle] = useState<Style>("gradient_line"); const [platform, setPlatform] = useState<Platform>("tiktok"); const [enabled, setEnabled] = useState(false); const [pending, setPending] = useState(false); const [message, setMessage] = useState<string | null>(null);
   const save = async (nextEnabled: boolean) => {
     setPending(true); setMessage(null);
     try {
-      const response = await fetch(`${API_URL}/api/v1/timelines/${timelineId}/visual-hooks`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ user_id: userId, enabled: nextEnabled, style, platform, suspense_enabled: true }) });
+      const response = await authenticatedFetch(`${API_URL}/api/v1/timelines/${timelineId}/visual-hooks`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled: nextEnabled, style, platform, suspense_enabled: true }) });
       const body = await response.json() as { detail?: string; status?: string; suspense_text?: string };
       if (!response.ok) throw new Error(body.detail ?? "無法更新視覺鉤子");
       setEnabled(nextEnabled); setMessage(nextEnabled ? (body.suspense_text ? `已加入「${body.suspense_text}」懸念提示` : "已加入安全區進度條") : "已停用視覺鉤子");

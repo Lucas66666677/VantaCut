@@ -26,7 +26,6 @@ class ClipSpeedCurve(BaseModel):
 
 
 class TimelineSpeedCurveUpdateRequest(BaseModel):
-    user_id: UUID
     curves: list[ClipSpeedCurve] = Field(min_length=1, max_length=100)
 
 
