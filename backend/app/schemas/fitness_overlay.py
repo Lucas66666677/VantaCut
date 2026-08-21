@@ -5,7 +5,6 @@ from pydantic import BaseModel, Field
 
 
 class FitnessOverlayRequest(BaseModel):
-    user_id: UUID
     source_asset_id: UUID
     exercise: Literal["squat", "bench_press", "deadlift"] = "squat"
     hud_style: Literal["impact", "neon", "minimal"] = "impact"

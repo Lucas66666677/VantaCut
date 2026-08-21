@@ -5,7 +5,6 @@ from pydantic import BaseModel, Field
 
 
 class LecturasRequest(BaseModel):
-    user_id: UUID
     avatar_profile_id: UUID
     source_asset_id: UUID
     assistant_name: str = Field(default="Lecturas", min_length=1, max_length=80)

@@ -8,7 +8,6 @@ TargetLanguage = Literal["en", "ja", "es"]
 
 
 class LocalizedDubRequest(BaseModel):
-    user_id: UUID
     render_job_id: UUID
     voice_profile_id: UUID
     target_language: TargetLanguage

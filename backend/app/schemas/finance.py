@@ -21,7 +21,6 @@ class FinanceAnnotation(BaseModel):
 
 
 class FinanceTrackRequest(BaseModel):
-    user_id: UUID
     symbol: str = Field(pattern=r"^[A-Za-z0-9.^=-]{1,20}$")
     market: Literal["twse", "yahoo_compatible"] = "twse"
     history_start: date
@@ -53,5 +52,4 @@ class FinanceTrackResponse(BaseModel):
 
 
 class FinanceAnnotationsUpdate(BaseModel):
-    user_id: UUID
     annotations: list[FinanceAnnotation] = Field(default_factory=list, max_length=20)

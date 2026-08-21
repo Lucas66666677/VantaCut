@@ -436,3 +436,6 @@ jobs:
       - name: Run M7 AI assistance timestamp schema regression tests
         working-directory: backend
         run: python -m pytest tests/test_m7_ai_assistance_schema.py -v
+      - name: Run M8 content automation route identity security tests
+        working-directory: backend
+        run: python -m pytest tests/test_m8_content_automation_identity.py -v

@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
+from app.auth.dependencies import get_current_user
 from app.models.entities import AvatarProfile, MediaAsset, Timeline, User
 from app.schemas.lecturas import LecturasRequest, LecturasTaskResponse
 from app.tasks.lecturas_tasks import generate_lecturas_interventions
@@ -14,14 +15,14 @@ router = APIRouter(prefix="/timelines", tags=["lecturas"])
 
 
 @router.post("/{timeline_id}/lecturas", response_model=LecturasTaskResponse, status_code=status.HTTP_202_ACCEPTED)
-def request_lecturas(timeline_id: UUID, payload: LecturasRequest, db: Session = Depends(get_db)) -> LecturasTaskResponse:
-    timeline, user = db.get(Timeline, timeline_id), db.get(User, payload.user_id)
+def request_lecturas(timeline_id: UUID, payload: LecturasRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> LecturasTaskResponse:
+    timeline = db.get(Timeline, timeline_id)
     asset, profile = db.get(MediaAsset, payload.source_asset_id), db.get(AvatarProfile, payload.avatar_profile_id)
-    if timeline is None or user is None or asset is None or profile is None:
-        raise HTTPException(status_code=404, detail="Timeline, user, source asset, or assistant avatar was not found")
+    if timeline is None or asset is None or profile is None:
+        raise HTTPException(status_code=404, detail="Timeline, source asset, or assistant avatar was not found")
     if not timeline.is_current:
         raise HTTPException(status_code=409, detail="Start Lecturas from the current Timeline version")
-    if timeline.project.owner_id != user.id or asset.project_id != timeline.project_id or profile.owner_id != user.id:
+    if timeline.project.owner_id != current_user.id or asset.project_id != timeline.project_id or profile.owner_id != current_user.id:
         raise HTTPException(status_code=403, detail="Lecturas is not authorised for this project or avatar")
     if profile.status != "ready":
         raise HTTPException(status_code=409, detail="Assistant avatar profile is not ready")
