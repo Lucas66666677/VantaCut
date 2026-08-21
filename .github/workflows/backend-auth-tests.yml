@@ -445,3 +445,6 @@ jobs:
       - name: Run M10 analysis tools route identity security tests
         working-directory: backend
         run: python -m pytest tests/test_m10_analysis_tools_identity.py -v
+      - name: Run M11 media lifecycle ownership security tests
+        working-directory: backend
+        run: python -m pytest tests/test_m11_media_ownership_identity.py -v
