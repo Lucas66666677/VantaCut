@@ -152,6 +152,6 @@ def test_review_participant_satisfies_reviews_timeline_for_user(db_session):
     db_session.add(participant)
     db_session.flush()
 
-    resolved_timeline, role = _reviews_module._timeline_for_user(db_session, timeline.id, reviewer.id)
+    resolved_timeline, role = _reviews_module._timeline_for_user(db_session, timeline.id, reviewer)
     assert resolved_timeline.id == timeline.id
     assert role == ReviewRole.REVIEWER.value
