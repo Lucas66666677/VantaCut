@@ -355,3 +355,6 @@ jobs:
       - name: Run M3 core workspace route identity security tests
         working-directory: backend
         run: python -m pytest tests/test_m3_core_workspace_identity.py -v
+      - name: Run workspace preference schema regression tests
+        working-directory: backend
+        run: python -m pytest tests/test_workspace_preference_schema.py -v

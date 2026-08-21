@@ -91,7 +91,10 @@ def test_m3_end_user_routes_reject_anonymous_and_invalid_tokens(db_session, head
         ("get", f"{API}/timelines/{timeline.id}/omnichannel-export/{uuid.uuid4()}", None),
     ]
     for method, url, body in requests:
-        response = getattr(client, method)(url, json=body, headers=headers)
+        kwargs = {"headers": headers}
+        if body is not None:
+            kwargs["json"] = body
+        response = getattr(client, method)(url, **kwargs)
         assert response.status_code == 401, (method, url, response.text)
 
 
