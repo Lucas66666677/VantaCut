@@ -3,10 +3,11 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.auth.dependencies import get_current_user
 from app.db.session import get_db
 from app.models.entities import MediaAsset, MediaHydrationJob, Project, User
 from app.schemas.mam import HydrateProjectRequest, HydrationResponse, ProjectStorageActor, ProjectStorageStatusResponse, ArchivedAssetStatus
@@ -17,11 +18,11 @@ from app.tasks.mam_tasks import restore_hydration_job
 router = APIRouter(prefix="/projects", tags=["media-lifecycle"])
 
 
-def _project_for_user(db: Session, project_id: UUID, user_id: UUID) -> tuple[Project, User]:
-    project, user = db.get(Project, project_id), db.get(User, user_id)
-    if project is None or user is None or project.owner_id != user.id:
+def _project_for_user(db: Session, project_id: UUID, user_id: UUID) -> Project:
+    project = db.get(Project, project_id)
+    if project is None or project.owner_id != user_id:
         raise HTTPException(status_code=404, detail="Project not found")
-    return project, user
+    return project
 
 
 def _hydration_response(job: MediaHydrationJob | None) -> HydrationResponse | None:
@@ -34,20 +35,25 @@ def _hydration_response(job: MediaHydrationJob | None) -> HydrationResponse | No
     )
 
 
-@router.post("/{project_id}/storage/mark-completed", status_code=status.HTTP_204_NO_CONTENT)
-def mark_project_completed(project_id: UUID, payload: ProjectStorageActor, db: Session = Depends(get_db)) -> None:
-    project, user = _project_for_user(db, project_id, payload.user_id)
+@router.post(
+    "/{project_id}/storage/mark-completed",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+    response_model=None,
+)
+def mark_project_completed(project_id: UUID, payload: ProjectStorageActor, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> None:
+    project = _project_for_user(db, project_id, current_user.id)
     now = datetime.now(UTC)
     project.lifecycle_state, project.completed_at, project.last_accessed_at = "completed", now, now
-    user.last_login_at = now
+    current_user.last_login_at = now
     db.commit()
 
 
 @router.get("/{project_id}/storage/status", response_model=ProjectStorageStatusResponse)
-def project_storage_status(project_id: UUID, user_id: UUID, db: Session = Depends(get_db)) -> ProjectStorageStatusResponse:
-    project, user = _project_for_user(db, project_id, user_id)
+def project_storage_status(project_id: UUID, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> ProjectStorageStatusResponse:
+    project = _project_for_user(db, project_id, current_user.id)
     now = datetime.now(UTC)
-    project.last_accessed_at, user.last_login_at = now, now
+    project.last_accessed_at, current_user.last_login_at = now, now
     assets = db.scalars(select(MediaAsset).where(MediaAsset.project_id == project.id)).all()
     job = db.scalar(select(MediaHydrationJob).where(
         MediaHydrationJob.project_id == project.id, MediaHydrationJob.status.in_(["queued", "restoring"])
@@ -68,12 +74,12 @@ def project_storage_status(project_id: UUID, user_id: UUID, db: Session = Depend
 
 
 @router.post("/{project_id}/storage/hydrate", response_model=HydrationResponse, status_code=status.HTTP_202_ACCEPTED)
-def hydrate_project(project_id: UUID, payload: HydrateProjectRequest, db: Session = Depends(get_db)) -> HydrationResponse:
-    project, user = _project_for_user(db, project_id, payload.user_id)
+def hydrate_project(project_id: UUID, payload: HydrateProjectRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> HydrationResponse:
+    project = _project_for_user(db, project_id, current_user.id)
     query = select(MediaAsset).where(MediaAsset.project_id == project.id)
     if payload.media_asset_ids:
         query = query.where(MediaAsset.id.in_(payload.media_asset_ids))
-    job = create_hydration_job(db, project=project, requested_by=user.id, assets=db.scalars(query).all())
+    job = create_hydration_job(db, project=project, requested_by=current_user.id, assets=db.scalars(query).all())
     if job is None:
         raise HTTPException(status_code=409, detail="No archived raw assets require hydration")
     db.commit(); db.refresh(job)

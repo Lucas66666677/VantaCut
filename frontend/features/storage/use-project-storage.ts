@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { authenticatedFetch } from "@/lib/api/authenticated-fetch";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -26,7 +27,7 @@ export function useProjectStorage(projectId?: string, userId?: string) {
   const refresh = useCallback(async () => {
     if (!projectId || !userId) return;
     try {
-      const response = await fetch(`${API_URL}/api/v1/projects/${projectId}/storage/status?user_id=${encodeURIComponent(userId)}`);
+      const response = await authenticatedFetch(`${API_URL}/api/v1/projects/${projectId}/storage/status`);
       if (!response.ok) throw new Error((await response.json().catch(() => null))?.detail ?? "無法取得儲存狀態");
       setStorage(await response.json() as ProjectStorageStatus);
     } catch (cause) {
@@ -38,8 +39,8 @@ export function useProjectStorage(projectId?: string, userId?: string) {
     if (!projectId || !userId) return;
     setLoading(true); setError(undefined);
     try {
-      const response = await fetch(`${API_URL}/api/v1/projects/${projectId}/storage/hydrate`, {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ user_id: userId }),
+      const response = await authenticatedFetch(`${API_URL}/api/v1/projects/${projectId}/storage/hydrate`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}),
       });
       if (!response.ok) throw new Error((await response.json().catch(() => null))?.detail ?? "無法啟動冷庫調回");
       const job = await response.json() as NonNullable<ProjectStorageStatus["active_hydration"]>;

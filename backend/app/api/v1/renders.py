@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.auth.dependencies import get_current_user
 from app.db.session import get_db
 from app.models.entities import RenderJob, RenderStatus, SubscriptionTier, TemplateLicense, TemplateLicenseStatus, Timeline, User
 from app.schemas.render import MatrixExportRequest, MatrixExportResponse, MatrixExportVariantResponse, RenderTimelineRequest, RenderTimelineResponse
@@ -57,13 +58,12 @@ def _matrix_response(db: Session, timeline: Timeline, batch_id: UUID) -> MatrixE
 
 
 @router.get("/render-jobs/{render_job_id}/download-url")
-def get_render_download_url(render_job_id: UUID, user_id: UUID, db: Session = Depends(get_db)) -> dict[str, str]:
+def get_render_download_url(render_job_id: UUID, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> dict[str, str]:
     """Return a short-lived output URL only to the owning editor for Web Share/download."""
     job = db.get(RenderJob, render_job_id)
-    user = db.get(User, user_id)
     if job is None or not job.output_key or job.status != RenderStatus.COMPLETED:
         raise HTTPException(status_code=404, detail="Completed render not found")
-    if user is None or job.project.owner_id != user.id:
+    if job.project.owner_id != current_user.id:
         raise HTTPException(status_code=403, detail="User cannot access this render")
     return {"download_url": create_download_url(job.output_key, expires_in=3600, attachment_filename=f"{job.id}.{job.output_format}")}
 
@@ -100,13 +100,14 @@ def _render_asset_ids(timeline: Timeline) -> set[UUID]:
 def request_timeline_render(
     timeline_id: UUID,
     payload: RenderTimelineRequest,
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> RenderTimelineResponse:
     timeline = db.get(Timeline, timeline_id)
     if timeline is None:
         raise HTTPException(status_code=404, detail="Timeline not found")
-    user = db.scalar(select(User).where(User.id == payload.user_id).with_for_update())
-    if user is None or timeline.project.owner_id != user.id:
+    user = db.scalar(select(User).where(User.id == current_user.id).with_for_update())
+    if user is None or timeline.project.owner_id != current_user.id:
         raise HTTPException(status_code=403, detail="User cannot render this timeline")
     duration = _render_duration(timeline)
     if duration <= 0:
@@ -203,8 +204,8 @@ def request_timeline_render(
 
 
 @router.post("/{timeline_id}/omnichannel-export", response_model=MatrixExportResponse, status_code=status.HTTP_202_ACCEPTED)
-def request_omnichannel_export(timeline_id: UUID, payload: MatrixExportRequest, db: Session = Depends(get_db)) -> MatrixExportResponse:
-    timeline, user = _authorise_matrix_timeline(db, timeline_id, payload.user_id)
+def request_omnichannel_export(timeline_id: UUID, payload: MatrixExportRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> MatrixExportResponse:
+    timeline, user = _authorise_matrix_timeline(db, timeline_id, current_user.id)
     duration = _render_duration(timeline)
     if duration <= 0:
         raise HTTPException(status_code=400, detail="Confirmed timeline has no keep segments")
@@ -243,6 +244,6 @@ def request_omnichannel_export(timeline_id: UUID, payload: MatrixExportRequest, 
 
 
 @router.get("/{timeline_id}/omnichannel-export/{batch_id}", response_model=MatrixExportResponse)
-def get_omnichannel_export(timeline_id: UUID, batch_id: UUID, user_id: UUID, db: Session = Depends(get_db)) -> MatrixExportResponse:
-    timeline, _ = _authorise_matrix_timeline(db, timeline_id, user_id)
+def get_omnichannel_export(timeline_id: UUID, batch_id: UUID, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> MatrixExportResponse:
+    timeline, _ = _authorise_matrix_timeline(db, timeline_id, current_user.id)
     return _matrix_response(db, timeline, batch_id)

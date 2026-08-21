@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.auth.dependencies import get_current_user
 from app.core.config import settings
 from app.db.session import get_db
 from app.models.entities import MediaAsset, Timeline, User
@@ -32,10 +33,10 @@ router = APIRouter(prefix="/timelines", tags=["cloud-drafts"])
 
 
 def _owned_timeline(timeline_id: UUID, user_id: UUID, db: Session) -> Timeline:
-    timeline, user = db.get(Timeline, timeline_id), db.get(User, user_id)
+    timeline = db.get(Timeline, timeline_id)
     if timeline is None:
         raise HTTPException(status_code=404, detail="Timeline not found")
-    if user is None or timeline.project.owner_id != user.id:
+    if timeline.project.owner_id != user_id:
         raise HTTPException(status_code=403, detail="User cannot access this timeline")
     return timeline
 
@@ -45,8 +46,8 @@ def _draft_from_settings(timeline: Timeline) -> dict[str, object]:
 
 
 @router.put("/{timeline_id}/cloud-draft", response_model=CloudDraftResponse)
-def save_cloud_draft(timeline_id: UUID, payload: CloudDraftPayload, db: Session = Depends(get_db)) -> CloudDraftResponse:
-    timeline = _owned_timeline(timeline_id, payload.user_id, db)
+def save_cloud_draft(timeline_id: UUID, payload: CloudDraftPayload, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> CloudDraftResponse:
+    timeline = _owned_timeline(timeline_id, current_user.id, db)
     encoded = json.dumps(payload.timeline, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     if len(encoded) > settings.cloud_draft_max_bytes:
         raise HTTPException(status_code=413, detail="Timeline draft exceeds the configured cloud draft size limit")
@@ -62,8 +63,8 @@ def save_cloud_draft(timeline_id: UUID, payload: CloudDraftPayload, db: Session 
 
 
 @router.get("/{timeline_id}/cloud-draft", response_model=CloudDraftResponse)
-def load_cloud_draft(timeline_id: UUID, user_id: UUID, db: Session = Depends(get_db)) -> CloudDraftResponse:
-    timeline = _owned_timeline(timeline_id, user_id, db)
+def load_cloud_draft(timeline_id: UUID, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> CloudDraftResponse:
+    timeline = _owned_timeline(timeline_id, current_user.id, db)
     draft = _draft_from_settings(timeline)
     if not draft:
         raise HTTPException(status_code=404, detail="No cloud draft exists for this timeline")
@@ -77,9 +78,9 @@ def load_cloud_draft(timeline_id: UUID, user_id: UUID, db: Session = Depends(get
 
 @router.post("/{timeline_id}/mobile-preview-handoff", response_model=MobilePreviewHandoffResponse)
 def create_mobile_preview_handoff(
-    timeline_id: UUID, payload: MobilePreviewHandoffRequest, db: Session = Depends(get_db)
+    timeline_id: UUID, payload: MobilePreviewHandoffRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)
 ) -> MobilePreviewHandoffResponse:
-    _owned_timeline(timeline_id, payload.user_id, db)
+    _owned_timeline(timeline_id, current_user.id, db)
     token, expires_epoch = issue_mobile_handoff_token(timeline_id)
     preview_url = f"{settings.web_app_base_url.rstrip('/')}/mobile-preview?token={token}"
     return MobilePreviewHandoffResponse(

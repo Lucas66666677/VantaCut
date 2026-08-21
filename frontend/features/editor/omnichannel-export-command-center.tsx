@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { authenticatedFetch } from "@/lib/api/authenticated-fetch";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
 
@@ -21,7 +22,7 @@ export function OmnichannelExportCommandCenter({ timelineId, userId }: { timelin
 
   const refresh = async (batchId = batch?.batch_id) => {
     if (!timelineId || !userId || !batchId) return;
-    const response = await fetch(`${API_BASE_URL}/api/v1/timelines/${timelineId}/omnichannel-export/${batchId}?user_id=${encodeURIComponent(userId)}`);
+    const response = await authenticatedFetch(`${API_BASE_URL}/api/v1/timelines/${timelineId}/omnichannel-export/${batchId}`);
     if (response.ok) setBatch(await response.json() as MatrixBatch);
   };
   useEffect(() => {
@@ -37,7 +38,7 @@ export function OmnichannelExportCommandCenter({ timelineId, userId }: { timelin
     if (!timelineId || !userId) return;
     setBusy(true); setMessage(null);
     try {
-      const response = await fetch(`${API_BASE_URL}/api/v1/timelines/${timelineId}/omnichannel-export`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ user_id: userId, resolution }) });
+      const response = await authenticatedFetch(`${API_BASE_URL}/api/v1/timelines/${timelineId}/omnichannel-export`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ resolution }) });
       const result = await response.json() as MatrixBatch;
       if (!response.ok) throw new Error(typeof result.detail === "string" ? result.detail : "無法啟動矩陣匯出");
       setBatch(result);

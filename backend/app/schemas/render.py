@@ -5,7 +5,6 @@ from pydantic import BaseModel
 
 
 class RenderTimelineRequest(BaseModel):
-    user_id: UUID
     resolution: Literal["720p", "1080p", "4k"] = "1080p"
     aspect_ratio: Literal["16:9", "9:16"] = "16:9"
     video_codec: Literal["auto", "h264", "hevc"] = "auto"
@@ -29,7 +28,6 @@ class RenderTimelineResponse(BaseModel):
 
 
 class MatrixExportRequest(BaseModel):
-    user_id: UUID
     resolution: Literal["720p", "1080p"] = "1080p"
     video_codec: Literal["auto", "h264", "hevc"] = "auto"
     container_format: Literal["mp4", "mov"] = "mp4"
