@@ -5,7 +5,7 @@ import type { ComponentType } from "react";
 
 import type { WorkspaceModuleId } from "@/types/workspace";
 
-const loading = () => <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-5 text-sm text-zinc-500">正在載入專業工具…</div>;
+const loading = () => <div className="rounded-[var(--lr-radius-md)] border border-[var(--lr-color-border)] bg-[var(--lr-color-surface)] p-5 text-sm text-[var(--lr-color-text-muted)]">正在載入專業工具…</div>;
 
 // These imports form independent client chunks; inactive professional tools do
 // not inflate the beginner workspace's initial JavaScript payload.

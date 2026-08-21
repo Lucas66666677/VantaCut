@@ -7,7 +7,7 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 interface HandoffResponse { preview_url: string; qr_code_data_uri: string; expires_at: string; detail?: string; }
 
-export function MobilePreviewHandoff({ timelineId }: { timelineId: string; userId: string }) {
+export function MobilePreviewHandoff({ timelineId }: { timelineId: string }) {
   const [handoff, setHandoff] = useState<HandoffResponse | null>(null); const [pending, setPending] = useState(false); const [error, setError] = useState<string | null>(null);
   const create = async () => {
     setPending(true); setError(null);

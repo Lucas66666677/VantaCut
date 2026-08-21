@@ -27,7 +27,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
 
   if (status === "loading") {
     return (
-      <main className="grid min-h-screen place-items-center bg-[#09090f] text-sm text-zinc-400">
+      <main className="grid min-h-screen place-items-center bg-[var(--lr-color-background)] text-sm text-[var(--lr-color-text-muted)]">
         正在確認登入狀態…
       </main>
     );
@@ -60,7 +60,7 @@ function LogoutControl() {
       type="button"
       onClick={() => logout()}
       title={email ? `登出（${email}）` : "登出"}
-      className="fixed bottom-3 right-3 z-50 rounded-full border border-white/10 bg-zinc-900/80 px-3 py-1.5 text-xs text-zinc-300 shadow-lg backdrop-blur transition hover:border-white/20 hover:text-white"
+      className="fixed bottom-4 right-4 z-50 rounded-[var(--lr-radius-sm)] border border-[var(--lr-color-border)] bg-[var(--lr-color-surface-raised)] px-3 py-2 text-xs font-medium text-[var(--lr-color-text-secondary)] shadow-[var(--lr-shadow-md)] hover:border-[var(--lr-color-border-strong)] hover:text-[var(--lr-color-text-primary)]"
     >
       登出
     </button>

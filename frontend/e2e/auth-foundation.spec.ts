@@ -8,16 +8,9 @@ import { expect, test, type Page } from "@playwright/test";
  * e2e/project-status-transport.spec.ts for the SSE/WebSocket transport
  * coverage.
  *
- * Drives AuthGate through app/test-harness/auth (not /studio): /studio's
- * only content, features/onboarding/studio-launchpad.tsx, statically
- * imports features/workspace/adaptive-editor-workspace.tsx, which in turn
- * imports two modules that have never existed anywhere in this repo's git
- * history and were already broken on the base branch before this PR — so
- * /studio cannot compile in this environment (dev or production build)
- * regardless of anything AuthGate does. The harness route wraps the exact
- * same AuthGate/AuthForm/auth-store code with no dependency on that
- * unrelated, pre-existing, out-of-scope bug. See that harness page's doc
- * comment for the full explanation.
+ * Most cases drive AuthGate through app/test-harness/auth to keep this suite
+ * focused and fast. A separate smoke case opens the real /studio route so
+ * its full static editor import graph cannot silently become unbuildable.
  */
 
 const TOKEN_STORAGE_KEY = "vantacut_access_token";
@@ -27,6 +20,13 @@ const TEST_USER = { id: "11111111-1111-1111-1111-111111111111", email: "reviewer
 async function readStoredToken(page: Page): Promise<string | null> {
   return page.evaluate((key) => window.sessionStorage.getItem(key), TOKEN_STORAGE_KEY);
 }
+
+test("the real studio entry compiles and presents the authenticated gate", async ({ page }) => {
+  await page.goto("/studio");
+  await expect(page.getByRole("heading", { name: "登入你的帳號" })).toBeVisible();
+  await expect(page.getByLabel("電子郵件")).toBeVisible();
+  await expect(page.getByText("VantaCut", { exact: true }).first()).toBeVisible();
+});
 
 test("successful login stores the access token in sessionStorage and reaches the app", async ({ page }) => {
   let loginBody: unknown;
