@@ -5,7 +5,6 @@ from pydantic import BaseModel
 
 
 class ProfanityFilterRequest(BaseModel):
-    user_id: UUID
     sfx_style: Literal["beep", "chicken", "coin"] = "beep"
     emoji_style: Literal["angry", "duck"] = "angry"
 

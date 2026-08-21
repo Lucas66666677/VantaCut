@@ -20,7 +20,7 @@ export function IntentFloatingMenu({ anchor, mediaAssetId, timelineId, userId, f
   const matte = async () => {
     setBusy("matting"); const id = begin({ kind: "matting", mediaAssetId, message: "已先套用人物去背預覽。" });
     try {
-      const response = await fetch(`${API_URL}/api/v1/media/${mediaAssetId}/matting`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ user_id: userId, mode: "click", frame_time: frameTime, points: [{ x: anchor.x, y: anchor.y, positive: true }], use_proxy: true, feather_pixels: 2.5, despill_strength: .65 }) });
+      const response = await authenticatedFetch(`${API_URL}/api/v1/media/${mediaAssetId}/matting`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mode: "click", frame_time: frameTime, points: [{ x: anchor.x, y: anchor.y, positive: true }], use_proxy: true, feather_pixels: 2.5, despill_strength: .65 }) });
       const result = await response.json() as { task_id?: string; detail?: string };
       if (!response.ok || !result.task_id) throw new Error(result.detail ?? "無法建立去背任務");
       attachTask(id, result.task_id); setMessage("去背預覽已套用，可以繼續剪輯。");

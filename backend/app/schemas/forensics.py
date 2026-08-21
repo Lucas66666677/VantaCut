@@ -4,7 +4,7 @@ from pydantic import BaseModel
 
 
 class VerifyForensicRenderRequest(BaseModel):
-    user_id: UUID
+    pass
 
 
 class ForensicVerificationResponse(BaseModel):

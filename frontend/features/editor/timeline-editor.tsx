@@ -28,6 +28,7 @@ import { TalkingHeadConfidencePanel } from "@/features/editor/talking-head-confi
 import { AudioSyncPanel } from "@/features/editor/audio-sync-panel";
 import { animateSnapSpring, clipEdgeSnapPoints, resolveSemanticSnap, triggerTimelineHaptic, useSemanticSnapPoints, type SemanticSnapPoint } from "@/features/editor/semantic-snapping";
 import { OptimisticProgress } from "@/features/editor/optimistic-progress";
+import { authenticatedFetch } from "@/lib/api/authenticated-fetch";
 import { optimisticJobsForClip, useOptimisticEffectsStore } from "@/features/editor/optimistic-effects-store";
 import { useOptimisticProjectJobs } from "@/features/editor/use-optimistic-project-jobs";
 import { useTimelineSandboxHistory, VersionComparisonDialog } from "@/features/editor/non-destructive-history";
@@ -308,7 +309,7 @@ export function TimelineEditor({ timeline, timelineId, projectId, userId, showIn
       const optimistic = useOptimisticEffectsStore.getState();
       const optimisticId = optimistic.begin({ kind: "matting", clipId: clip.id, mediaAssetId: clip.source_asset_id, message: "已先套用人物去背預覽。" });
       try {
-        const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000"}/api/v1/media/${clip.source_asset_id}/matting`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ user_id: userId, mode: "click", frame_time: useTimelineStore.getState().playheadTime, points: [{ x: .5, y: .5, positive: true }], use_proxy: true, feather_pixels: 2.5, despill_strength: .65 }) });
+        const response = await authenticatedFetch(`${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000"}/api/v1/media/${clip.source_asset_id}/matting`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mode: "click", frame_time: useTimelineStore.getState().playheadTime, points: [{ x: .5, y: .5, positive: true }], use_proxy: true, feather_pixels: 2.5, despill_strength: .65 }) });
         const result = await response.json() as { task_id?: string; detail?: string };
         if (!response.ok || !result.task_id) throw new Error(result.detail ?? "無法建立去背任務");
         optimistic.attachTask(optimisticId, result.task_id);
