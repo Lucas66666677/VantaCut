@@ -7,7 +7,6 @@ from pydantic import BaseModel, Field
 
 
 class RetentionPredictionRequest(BaseModel):
-    user_id: UUID
     refresh: bool = False
 
 

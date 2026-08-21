@@ -442,3 +442,6 @@ jobs:
       - name: Run M9 media generation route identity security tests
         working-directory: backend
         run: python -m pytest tests/test_m9_media_generation_identity.py -v
+      - name: Run M10 analysis tools route identity security tests
+        working-directory: backend
+        run: python -m pytest tests/test_m10_analysis_tools_identity.py -v

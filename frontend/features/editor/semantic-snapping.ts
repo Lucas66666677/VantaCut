@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { authenticatedFetch } from "@/lib/api/authenticated-fetch";
 
 const API_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
 
@@ -95,7 +96,7 @@ export function useSemanticSnapPoints(timelineId?: string, userId?: string) {
   useEffect(() => {
     if (!timelineId || !userId) { setPoints([]); return; }
     const controller = new AbortController();
-    void fetch(`${API_URL}/api/v1/timelines/${timelineId}/semantic-snap-points?user_id=${encodeURIComponent(userId)}`, { signal: controller.signal })
+    void authenticatedFetch(`${API_URL}/api/v1/timelines/${timelineId}/semantic-snap-points`, { signal: controller.signal })
       .then(async (response) => response.ok ? response.json() : Promise.reject(new Error("semantic snap points unavailable")))
       .then((payload: { points?: SemanticSnapPoint[] }) => setPoints(Array.isArray(payload.points) ? payload.points : []))
       .catch((error: unknown) => { if ((error as { name?: string }).name !== "AbortError") setPoints([]); });

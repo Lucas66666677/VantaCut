@@ -5,7 +5,6 @@ from pydantic import BaseModel, Field
 
 
 class LanguageReviewRequest(BaseModel):
-    user_id: UUID
     media_asset_id: UUID
     timeline_id: UUID
     target: Literal["ielts_speaking", "advanced_english"] = "ielts_speaking"

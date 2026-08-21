@@ -3,6 +3,7 @@
 import { useCallback, useEffect } from "react";
 
 import { type OneClickTemplate, useOneClickStore } from "@/features/one-click/one-click-store";
+import { authenticatedFetch } from "@/lib/api/authenticated-fetch";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -14,7 +15,7 @@ interface GenerateOptions {
   autoRender?: boolean;
 }
 
-export function useOneClickGenerate(projectId: string | null, userId: string | null) {
+export function useOneClickGenerate(projectId: string | null, _userId: string | null) {
   const setTemplates = useOneClickStore((state) => state.setTemplates);
   const start = useOneClickStore((state) => state.start);
   const fail = useOneClickStore((state) => state.fail);
@@ -33,13 +34,13 @@ export function useOneClickGenerate(projectId: string | null, userId: string | n
   }, [fail, setTemplates]);
 
   const generate = useCallback(async (options: GenerateOptions) => {
-    if (!projectId || !userId) throw new Error("需要 projectId 與 userId 才能生成影片");
+    if (!projectId) throw new Error("需要 projectId 才能生成影片");
     if (!options.mediaAssetIds.length) throw new Error("請至少選擇一段已處理完成的影片素材");
     start();
     try {
-      const response = await fetch(`${API_URL}/api/v1/projects/${projectId}/one-click/generate`, {
+      const response = await authenticatedFetch(`${API_URL}/api/v1/projects/${projectId}/one-click/generate`, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ user_id: userId, template_id: options.templateId, media_asset_ids: options.mediaAssetIds, bgm_asset_id: options.bgmAssetId, resolution: options.resolution ?? "1080p", auto_render: options.autoRender ?? true }),
+        body: JSON.stringify({ template_id: options.templateId, media_asset_ids: options.mediaAssetIds, bgm_asset_id: options.bgmAssetId, resolution: options.resolution ?? "1080p", auto_render: options.autoRender ?? true }),
       });
       const payload = await response.json() as { task_id?: string; detail?: string };
       if (!response.ok || !payload.task_id) throw new Error(payload.detail ?? "無法建立一鍵成片任務");
@@ -50,7 +51,7 @@ export function useOneClickGenerate(projectId: string | null, userId: string | n
     } finally {
       finish();
     }
-  }, [fail, finish, projectId, start, userId]);
+  }, [fail, finish, projectId, start]);
 
   return { generate };
 }

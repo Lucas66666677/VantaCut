@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
+from app.auth.dependencies import get_current_user
 from app.models.entities import AIFeedback, Clip, MediaAsset, Timeline, User
 from app.schemas.feedback import AIFeedbackCreate, AIFeedbackResponse
 from app.schemas.template import ExtractTemplateRequest, TemplateResponse
@@ -19,17 +20,16 @@ router = APIRouter(prefix="/analysis", tags=["analysis"])
 
 
 @router.post("/timelines/{timeline_id}/hook-check", response_model=HookReport)
-def check_opening_hook(timeline_id: str, payload: HookCheckRequest, db: Session = Depends(get_db)) -> HookReport:
+def check_opening_hook(timeline_id: str, payload: HookCheckRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> HookReport:
     from uuid import UUID
 
     try:
         timeline = db.get(Timeline, UUID(timeline_id))
     except ValueError as exc:
         raise HTTPException(status_code=422, detail="Invalid timeline ID") from exc
-    user = db.get(User, payload.user_id)
-    if timeline is None or user is None:
-        raise HTTPException(status_code=404, detail="Timeline or user not found")
-    if timeline.project.owner_id != user.id:
+    if timeline is None:
+        raise HTTPException(status_code=404, detail="Timeline not found")
+    if timeline.project.owner_id != current_user.id:
         raise HTTPException(status_code=403, detail="User cannot inspect this timeline")
     try:
         report = analyze_opening_hook(db, timeline)
@@ -41,17 +41,16 @@ def check_opening_hook(timeline_id: str, payload: HookCheckRequest, db: Session 
 
 
 @router.post("/timelines/{timeline_id}/hook-rescue", response_model=HookRescueResponse, status_code=status.HTTP_201_CREATED)
-def rescue_opening_hook(timeline_id: str, payload: HookRescueRequest, db: Session = Depends(get_db)) -> HookRescueResponse:
+def rescue_opening_hook(timeline_id: str, payload: HookRescueRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> HookRescueResponse:
     from uuid import UUID
 
     try:
         timeline = db.get(Timeline, UUID(timeline_id))
     except ValueError as exc:
         raise HTTPException(status_code=422, detail="Invalid timeline ID") from exc
-    user = db.get(User, payload.user_id)
-    if timeline is None or user is None:
-        raise HTTPException(status_code=404, detail="Timeline or user not found")
-    if timeline.project.owner_id != user.id:
+    if timeline is None:
+        raise HTTPException(status_code=404, detail="Timeline not found")
+    if timeline.project.owner_id != current_user.id:
         raise HTTPException(status_code=403, detail="User cannot modify this timeline")
     try:
         rescued = apply_hook_rescue(db, timeline)
@@ -64,11 +63,11 @@ def rescue_opening_hook(timeline_id: str, payload: HookRescueRequest, db: Sessio
 
 
 @router.post("/language-review", response_model=LanguageReviewQueuedResponse, status_code=status.HTTP_202_ACCEPTED)
-def request_language_review(payload: LanguageReviewRequest, db: Session = Depends(get_db)) -> LanguageReviewQueuedResponse:
-    asset, timeline, user = db.get(MediaAsset, payload.media_asset_id), db.get(Timeline, payload.timeline_id), db.get(User, payload.user_id)
-    if asset is None or timeline is None or user is None:
-        raise HTTPException(status_code=404, detail="Media asset, Timeline, or user not found")
-    if asset.project_id != timeline.project_id or timeline.project.owner_id != user.id:
+def request_language_review(payload: LanguageReviewRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> LanguageReviewQueuedResponse:
+    asset, timeline = db.get(MediaAsset, payload.media_asset_id), db.get(Timeline, payload.timeline_id)
+    if asset is None or timeline is None:
+        raise HTTPException(status_code=404, detail="Media asset or Timeline not found")
+    if asset.project_id != timeline.project_id or timeline.project.owner_id != current_user.id:
         raise HTTPException(status_code=403, detail="User cannot review this media/timeline")
     timeline.settings_json = {**dict(timeline.settings_json or {}), "language_review": {"status": "queued", "target": payload.target, "language": payload.language}}
     db.commit(); task = review_language_video.delay(str(asset.id), str(timeline.id), payload.target)
@@ -79,6 +78,7 @@ def request_language_review(payload: LanguageReviewRequest, db: Session = Depend
 def predict_retention_before_export(
     timeline_id: str,
     payload: RetentionPredictionRequest,
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> RetentionPredictionResponse:
     """Estimate risk before render; never represent this as observed YouTube/TikTok analytics."""
@@ -88,10 +88,9 @@ def predict_retention_before_export(
         timeline = db.get(Timeline, UUID(timeline_id))
     except ValueError as exc:
         raise HTTPException(status_code=422, detail="Invalid timeline ID") from exc
-    user = db.get(User, payload.user_id)
-    if timeline is None or user is None:
-        raise HTTPException(status_code=404, detail="Timeline or user not found")
-    if timeline.project.owner_id != user.id:
+    if timeline is None:
+        raise HTTPException(status_code=404, detail="Timeline not found")
+    if timeline.project.owner_id != current_user.id:
         raise HTTPException(status_code=403, detail="User cannot predict retention for this project")
     try:
         prediction = predict_timeline_retention(db, timeline)
@@ -106,7 +105,12 @@ def predict_retention_before_export(
 
 
 @router.post("/gaming-highlights", response_model=GamingHighlightQueuedResponse, status_code=status.HTTP_202_ACCEPTED)
-def request_gaming_highlights(payload: GamingHighlightRequest) -> GamingHighlightQueuedResponse:
+def request_gaming_highlights(payload: GamingHighlightRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> GamingHighlightQueuedResponse:
+    asset = db.get(MediaAsset, payload.media_asset_id)
+    if asset is None:
+        raise HTTPException(status_code=404, detail="Media asset not found")
+    if asset.project.owner_id != current_user.id:
+        raise HTTPException(status_code=403, detail="User cannot analyze this media asset")
     task = generate_gaming_highlights.delay(
         str(payload.media_asset_id),
         payload.microphone_track_index,
@@ -119,14 +123,14 @@ def request_gaming_highlights(payload: GamingHighlightRequest) -> GamingHighligh
 @router.post("/feedback", response_model=AIFeedbackResponse, status_code=status.HTTP_201_CREATED)
 def record_analysis_feedback(
     payload: AIFeedbackCreate,
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> AIFeedbackResponse:
     """Record a user override without mutating the original AI result."""
     timeline = db.get(Timeline, payload.timeline_id)
-    user = db.get(User, payload.user_id)
-    if timeline is None or user is None:
-        raise HTTPException(status_code=404, detail="Timeline or user not found")
-    if timeline.project.owner_id != user.id:
+    if timeline is None:
+        raise HTTPException(status_code=404, detail="Timeline not found")
+    if timeline.project.owner_id != current_user.id:
         raise HTTPException(status_code=403, detail="User cannot submit feedback for this project")
 
     clip = db.get(Clip, payload.clip_id) if payload.clip_id else None
@@ -134,7 +138,7 @@ def record_analysis_feedback(
         raise HTTPException(status_code=404, detail="Clip not found in this timeline")
 
     feedback = AIFeedback(
-        user_id=user.id,
+        user_id=current_user.id,
         project_id=timeline.project_id,
         timeline_id=timeline.id,
         clip_id=clip.id if clip else None,
@@ -164,8 +168,14 @@ def record_analysis_feedback(
 )
 def extract_template_endpoint(
     payload: ExtractTemplateRequest,
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> TemplateResponse:
+    asset = db.get(MediaAsset, payload.media_asset_id)
+    if asset is None:
+        raise HTTPException(status_code=404, detail="Media asset not found")
+    if asset.project.owner_id != current_user.id:
+        raise HTTPException(status_code=403, detail="User cannot extract a template from this media asset")
     try:
         template = extract_template(db, payload.media_asset_id)
     except LookupError as exc:
