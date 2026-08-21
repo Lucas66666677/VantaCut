@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
+from app.auth.dependencies import get_current_user
 from app.models.entities import Timeline, User
 from app.schemas.stickers import RecommendStickersRequest, StickerResponse, StickerTransformRequest, ToggleAIStickersRequest
 from app.services.sticker_recommendations import recommend_stickers
@@ -23,11 +24,11 @@ def get_builtin_sticker(sticker_id: str) -> Response:
     return Response(content=payload, media_type="image/webp", headers={"Cache-Control": "public, max-age=86400"})
 
 
-def _owned(timeline_id: UUID, user_id: UUID, db: Session) -> Timeline:
-    timeline, user = db.get(Timeline, timeline_id), db.get(User, user_id)
+def _owned(timeline_id: UUID, current_user: User, db: Session) -> Timeline:
+    timeline = db.get(Timeline, timeline_id)
     if timeline is None:
         raise HTTPException(status_code=404, detail="Timeline not found")
-    if user is None or timeline.project.owner_id != user.id:
+    if timeline.project.owner_id != current_user.id:
         raise HTTPException(status_code=403, detail="User cannot modify this timeline")
     return timeline
 
@@ -37,8 +38,8 @@ def _sticker_track(settings: dict[str, object]) -> dict[str, object] | None:
 
 
 @router.post("/{timeline_id}/recommend-stickers", response_model=StickerResponse)
-def create_sticker_recommendations(timeline_id: UUID, payload: RecommendStickersRequest, db: Session = Depends(get_db)) -> StickerResponse:
-    timeline = _owned(timeline_id, payload.user_id, db); settings = dict(timeline.settings_json or {})
+def create_sticker_recommendations(timeline_id: UUID, payload: RecommendStickersRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> StickerResponse:
+    timeline = _owned(timeline_id, current_user, db); settings = dict(timeline.settings_json or {})
     cues = list(dict(settings.get("subtitles", {})).get("items", []))
     if not cues:
         raise HTTPException(status_code=409, detail="Generate timestamped subtitles before requesting sticker recommendations")
@@ -51,8 +52,8 @@ def create_sticker_recommendations(timeline_id: UUID, payload: RecommendStickers
 
 
 @router.put("/{timeline_id}/ai-stickers/enabled", response_model=StickerResponse)
-def toggle_ai_stickers(timeline_id: UUID, payload: ToggleAIStickersRequest, db: Session = Depends(get_db)) -> StickerResponse:
-    timeline = _owned(timeline_id, payload.user_id, db); settings = dict(timeline.settings_json or {}); track = _sticker_track(settings)
+def toggle_ai_stickers(timeline_id: UUID, payload: ToggleAIStickersRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> StickerResponse:
+    timeline = _owned(timeline_id, current_user, db); settings = dict(timeline.settings_json or {}); track = _sticker_track(settings)
     if track is None:
         raise HTTPException(status_code=404, detail="No AI sticker track exists")
     track["enabled"] = payload.enabled
@@ -63,8 +64,8 @@ def toggle_ai_stickers(timeline_id: UUID, payload: ToggleAIStickersRequest, db: 
 
 
 @router.patch("/{timeline_id}/stickers/{sticker_id}", response_model=StickerResponse)
-def update_sticker_transform(timeline_id: UUID, sticker_id: str, payload: StickerTransformRequest, db: Session = Depends(get_db)) -> StickerResponse:
-    timeline = _owned(timeline_id, payload.user_id, db); settings = dict(timeline.settings_json or {}); track = _sticker_track(settings)
+def update_sticker_transform(timeline_id: UUID, sticker_id: str, payload: StickerTransformRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> StickerResponse:
+    timeline = _owned(timeline_id, current_user, db); settings = dict(timeline.settings_json or {}); track = _sticker_track(settings)
     if track is None:
         raise HTTPException(status_code=404, detail="No AI sticker track exists")
     found = False; items: list[dict[str, object]] = []

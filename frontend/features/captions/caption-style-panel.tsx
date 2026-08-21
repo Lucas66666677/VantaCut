@@ -4,6 +4,7 @@ import { useState } from "react";
 
 import { type CaptionVisualStyle, KineticCaptionCanvas, type KineticCaptionCue } from "@/features/captions/kinetic-caption-canvas";
 import { DomWebglTextStage } from "@/features/captions/dom-webgl-text-stage";
+import { authenticatedFetch } from "@/lib/api/authenticated-fetch";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 const PRESETS: Array<{ id: CaptionVisualStyle; label: string; description: string }> = [
@@ -21,7 +22,7 @@ interface CaptionStylePanelProps {
   previewHeight?: number;
 }
 
-export function CaptionStylePanel({ timelineId, userId, cues, currentTimeMs, previewWidth = 270, previewHeight = 480 }: CaptionStylePanelProps) {
+export function CaptionStylePanel({ timelineId, cues, currentTimeMs, previewWidth = 270, previewHeight = 480 }: CaptionStylePanelProps) {
   const [preset, setPreset] = useState<CaptionVisualStyle>("viral_yellow");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -29,9 +30,9 @@ export function CaptionStylePanel({ timelineId, userId, cues, currentTimeMs, pre
   const apply = async () => {
     setSaving(true); setError(null);
     try {
-      const response = await fetch(`${API_URL}/api/v1/timelines/${timelineId}/caption-style`, {
+      const response = await authenticatedFetch(`${API_URL}/api/v1/timelines/${timelineId}/caption-style`, {
         method: "PUT", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ user_id: userId, preset, aspect_ratio: "9:16" }),
+        body: JSON.stringify({ preset, aspect_ratio: "9:16" }),
       });
       const payload = await response.json() as { detail?: string };
       if (!response.ok) throw new Error(payload.detail ?? "無法套用字幕樣式");

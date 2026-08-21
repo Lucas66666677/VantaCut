@@ -6,6 +6,7 @@ import { StickerCanvasOverlay, type TimelineSticker } from "@/features/editor/st
 import { SocialSafeZoneControls, SocialSafeZoneOverlay } from "@/features/editor/social-safe-zone-overlay";
 import { IntentFloatingMenu, type CanvasPoint } from "@/features/editor/intent-floating-menu";
 import type { SocialPlatform } from "@/features/editor/social-safe-zones";
+import { authenticatedFetch } from "@/lib/api/authenticated-fetch";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -17,7 +18,7 @@ export function StickerPreviewStage({ timelineId, userId, currentTime, children,
   const [intentAnchor, setIntentAnchor] = useState<CanvasPoint | null>(null);
   const update = async (next: TimelineSticker) => {
     const updated = stickers.map((item) => item.id === next.id ? next : item); onStickersChange(updated); setSaving(true);
-    try { await fetch(`${API_URL}/api/v1/timelines/${timelineId}/stickers/${encodeURIComponent(next.id)}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ user_id: userId, source: "user", transform: { x: next.position.x, y: next.position.y, scale: next.scale, rotation: next.rotation } }) }); } finally { setSaving(false); }
+    try { await authenticatedFetch(`${API_URL}/api/v1/timelines/${timelineId}/stickers/${encodeURIComponent(next.id)}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ source: "user", transform: { x: next.position.x, y: next.position.y, scale: next.scale, rotation: next.rotation } }) }); } finally { setSaving(false); }
   };
   const openIntentMenu = (event: PointerEvent<HTMLDivElement>) => {
     if (!contextualPerson || event.button !== 0) return;

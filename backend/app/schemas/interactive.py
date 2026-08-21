@@ -57,7 +57,6 @@ class InteractiveGraph(BaseModel):
 
 
 class SaveInteractiveGraphRequest(BaseModel):
-    user_id: UUID
     graph: InteractiveGraph
 
 

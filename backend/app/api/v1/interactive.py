@@ -8,6 +8,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
+from app.auth.dependencies import get_current_user
 from app.models.entities import InteractivePlaybackEvent, InteractivePlaybackSession, MediaAsset, Timeline, User
 from app.schemas.interactive import (
     InteractiveAnalyticsResponse, InteractiveEventRequest, InteractiveGraph, InteractiveManifest,
@@ -30,9 +31,8 @@ def _graph(timeline: Timeline) -> InteractiveGraph:
         raise HTTPException(status_code=409, detail="Interactive graph is invalid") from exc
 
 
-def _assert_owner(db: Session, timeline: Timeline, user_id: UUID) -> None:
-    user = db.get(User, user_id)
-    if user is None or timeline.project.owner_id != user.id:
+def _assert_owner(timeline: Timeline, current_user: User) -> None:
+    if timeline.project.owner_id != current_user.id:
         raise HTTPException(status_code=403, detail="User cannot modify this interactive timeline")
 
 
@@ -48,11 +48,11 @@ def _assert_graph_assets(db: Session, timeline: Timeline, graph: InteractiveGrap
 
 
 @creator_router.put("/{timeline_id}/interactive-graph", response_model=InteractiveGraph)
-def save_interactive_graph(timeline_id: UUID, payload: SaveInteractiveGraphRequest, db: Session = Depends(get_db)) -> InteractiveGraph:
+def save_interactive_graph(timeline_id: UUID, payload: SaveInteractiveGraphRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> InteractiveGraph:
     timeline = db.get(Timeline, timeline_id)
     if timeline is None:
         raise HTTPException(status_code=404, detail="Timeline not found")
-    _assert_owner(db, timeline, payload.user_id)
+    _assert_owner(timeline, current_user)
     _assert_graph_assets(db, timeline, payload.graph)
     timeline.settings_json = {**dict(timeline.settings_json or {}), "interactive_graph": payload.graph.model_dump(mode="json")}
     db.commit()
@@ -125,11 +125,11 @@ def record_interactive_event(session_id: UUID, payload: InteractiveEventRequest,
 
 
 @creator_router.get("/{timeline_id}/interactive-analytics", response_model=InteractiveAnalyticsResponse)
-def interactive_analytics(timeline_id: UUID, user_id: UUID, db: Session = Depends(get_db)) -> InteractiveAnalyticsResponse:
+def interactive_analytics(timeline_id: UUID, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> InteractiveAnalyticsResponse:
     timeline = db.get(Timeline, timeline_id)
     if timeline is None:
         raise HTTPException(status_code=404, detail="Timeline not found")
-    _assert_owner(db, timeline, user_id)
+    _assert_owner(timeline, current_user)
     graph = _graph(timeline)
     sessions = int(db.scalar(select(func.count(InteractivePlaybackSession.id)).where(
         InteractivePlaybackSession.timeline_id == timeline.id

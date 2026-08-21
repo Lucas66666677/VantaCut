@@ -136,6 +136,16 @@ on:
       - "backend/app/schemas/voice.py"
       - "backend/tests/test_m4_audio_voice_identity.py"
       - "backend/tests/test_voice_profile_schema.py"
+      # M5 mechanical migration: subtitles, stickers, meme GIFs, and interactive authoring
+      - "backend/app/api/v1/subtitles.py"
+      - "backend/app/api/v1/stickers.py"
+      - "backend/app/api/v1/meme_gifs.py"
+      - "backend/app/api/v1/interactive.py"
+      - "backend/app/schemas/subtitle.py"
+      - "backend/app/schemas/stickers.py"
+      - "backend/app/schemas/meme_gifs.py"
+      - "backend/app/schemas/interactive.py"
+      - "backend/tests/test_m5_interactive_content_identity.py"
       - ".github/workflows/backend-auth-tests.yml"
   push:
     branches: [main]
@@ -382,3 +392,6 @@ jobs:
       - name: Run voice profile schema regression tests
         working-directory: backend
         run: python -m pytest tests/test_voice_profile_schema.py -v
+      - name: Run M5 interactive content route identity security tests
+        working-directory: backend
+        run: python -m pytest tests/test_m5_interactive_content_identity.py -v

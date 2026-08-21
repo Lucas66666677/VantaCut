@@ -5,7 +5,6 @@ from pydantic import BaseModel, Field
 
 
 class MemeGifRequest(BaseModel):
-    user_id: UUID
     source_asset_id: UUID | None = None
     provider: Literal["auto", "tenor", "giphy"] = "auto"
     insertion_mode: Literal["overlay", "cutaway"] = "overlay"
