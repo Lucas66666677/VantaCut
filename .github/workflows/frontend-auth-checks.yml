@@ -58,6 +58,9 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - name: Install dependencies
         run: npm ci
+      - name: Verify migrated frontend callers do not reintroduce caller identity
+        run: |
+          node -e "const fs=require('fs'); const p='features/editor/mobile-preview-handoff.tsx'; const s=fs.readFileSync(p,'utf8'); if(!s.includes('authenticatedFetch(') || s.includes('user_id')) { throw new Error(p + ' must use authenticatedFetch without client caller identity'); }"
       # No "Lint" step: this repo has no ESLint config or `eslint` dependency
       # anywhere (verified — not something this PR's scope introduced or
       # removed), so `npm run lint` (`next lint`) has nothing to run against
