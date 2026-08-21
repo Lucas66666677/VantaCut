@@ -91,6 +91,7 @@ services:
       S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin123}
       S3_BUCKET: ${MINIO_BUCKET:-media}
       ENVIRONMENT: ${ENVIRONMENT:-development}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-}
       MOCK_AI: ${MOCK_AI:-true}
       MOCK_AI_DELAY_SECONDS: ${MOCK_AI_DELAY_SECONDS:-0.35}
       AI_VISION_PROVIDER: ${AI_VISION_PROVIDER:-gemini}

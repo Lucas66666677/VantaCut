@@ -32,6 +32,7 @@ jobs:
       POSTGRES_USER: video_editor
       POSTGRES_PASSWORD: video_editor_dev
       NEXT_PUBLIC_API_URL: http://127.0.0.1:8000
+      JWT_SECRET_KEY: render-contract-ci-only-secret-do-not-reuse-1234567890
     steps:
       - uses: actions/checkout@v4
       - name: Build and start test database, Redis, object storage, API, worker, and UI
@@ -69,7 +70,8 @@ jobs:
         run: |
           timeline_id="$(jq -r .timeline_id artifacts/seed.json)"
           user_id="$(jq -r .user_id artifacts/seed.json)"
-          response="$(curl --fail --silent --show-error -X POST "http://127.0.0.1:8000/api/v1/timelines/$timeline_id/render" -H 'content-type: application/json' --data "{\"user_id\":\"$user_id\",\"resolution\":\"1080p\",\"aspect_ratio\":\"16:9\"}")"
+          access_token="$(docker compose exec -T backend python -c 'import sys, uuid; from app.core.security import create_access_token; print(create_access_token(uuid.UUID(sys.argv[1])))' "$user_id")"
+          response="$(curl --fail --silent --show-error -X POST "http://127.0.0.1:8000/api/v1/timelines/$timeline_id/render" -H 'content-type: application/json' -H "authorization: Bearer $access_token" --data '{"resolution":"1080p","aspect_ratio":"16:9"}')"
           echo "$response" | jq .
           echo "render_job_id=$(echo "$response" | jq -r .render_job_id)" >> "$GITHUB_OUTPUT"
       - name: Wait for render output and create a presigned browser download URL

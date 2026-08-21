@@ -8,6 +8,7 @@ on:
       - "backend/app/core/progress.py"
       - "backend/app/auth/**"
       - "backend/app/api/v1/auth.py"
+      - "backend/app/api/v1/platform.py"
       - "backend/app/api/v1/project_status.py"
       - "backend/app/api/v1/ai.py"
       - "backend/app/ai/**"
@@ -25,6 +26,7 @@ on:
       - "backend/app/models/entities.py"
       - "backend/migrations/**"
       - "backend/tests/test_auth.py"
+      - "backend/tests/test_platform_response_contract.py"
       - "backend/tests/test_project_status.py"
       - "backend/tests/test_ai_analyze_video.py"
       - "backend/tests/test_collaboration.py"
@@ -358,6 +360,9 @@ jobs:
       - name: Run auth security tests
         working-directory: backend
         run: python -m pytest tests/test_auth.py -v
+      - name: Run platform response-contract regression test
+        working-directory: backend
+        run: python -m pytest tests/test_platform_response_contract.py -v
       - name: Run project_status.py security tests (Batch 1)
         working-directory: backend
         run: python -m pytest tests/test_project_status.py -v
