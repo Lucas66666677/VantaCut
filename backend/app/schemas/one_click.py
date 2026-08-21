@@ -14,7 +14,6 @@ class OneClickTemplateResponse(BaseModel):
 
 
 class OneClickGenerateRequest(BaseModel):
-    user_id: UUID
     template_id: str = Field(min_length=1, max_length=100)
     media_asset_ids: list[UUID] = Field(min_length=1, max_length=80)
     bgm_asset_id: UUID | None = None

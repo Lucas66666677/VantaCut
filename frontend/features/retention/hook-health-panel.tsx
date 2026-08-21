@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { authenticatedFetch } from "@/lib/api/authenticated-fetch";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -18,7 +19,7 @@ const LIGHT: Record<TrafficLight, string> = { green: "bg-emerald-400", yellow: "
 const LABEL: Record<TrafficLight, string> = { green: "開場狀態良好", yellow: "建議優化開場", red: "高流失風險" };
 
 /** Put this in the export modal before the final render action. */
-export function HookHealthPanel({ timelineId, userId, onRescued }: HookHealthPanelProps) {
+export function HookHealthPanel({ timelineId, onRescued }: HookHealthPanelProps) {
   const [report, setReport] = useState<HookReport>();
   const [loading, setLoading] = useState(false);
   const [rescuing, setRescuing] = useState(false);
@@ -27,23 +28,23 @@ export function HookHealthPanel({ timelineId, userId, onRescued }: HookHealthPan
   const check = useCallback(async () => {
     setLoading(true); setError(undefined);
     try {
-      const response = await fetch(`${API_URL}/api/v1/analysis/timelines/${timelineId}/hook-check`, {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ user_id: userId }),
+      const response = await authenticatedFetch(`${API_URL}/api/v1/analysis/timelines/${timelineId}/hook-check`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}),
       });
       const body = await response.json() as HookReport & { detail?: string };
       if (!response.ok) throw new Error(body.detail ?? "無法完成開場健檢");
       setReport(body);
     } catch (cause) { setError(cause instanceof Error ? cause.message : "無法完成開場健檢"); }
     finally { setLoading(false); }
-  }, [timelineId, userId]);
+  }, [timelineId]);
 
   useEffect(() => { void check(); }, [check]);
 
   const rescue = async () => {
     setRescuing(true); setError(undefined);
     try {
-      const response = await fetch(`${API_URL}/api/v1/analysis/timelines/${timelineId}/hook-rescue`, {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ user_id: userId }),
+      const response = await authenticatedFetch(`${API_URL}/api/v1/analysis/timelines/${timelineId}/hook-rescue`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}),
       });
       const body = await response.json() as { timeline_id?: string; detail?: string };
       if (!response.ok || !body.timeline_id) throw new Error(body.detail ?? "無法建立 Hook 救援版本");

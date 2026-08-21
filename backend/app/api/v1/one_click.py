@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
+from app.auth.dependencies import get_current_user
 from app.models.entities import MediaAsset, Project, User
 from app.schemas.one_click import OneClickGenerateRequest, OneClickGenerateResponse, OneClickTemplateResponse
 from app.services.one_click_templates import OneClickTemplateError, get_template, list_templates, template_summary
@@ -18,11 +19,11 @@ def available_templates() -> list[dict[str, object]]:
 
 
 @router.post("/{project_id}/one-click/generate", response_model=OneClickGenerateResponse, status_code=status.HTTP_202_ACCEPTED)
-def generate_one_click(project_id: UUID, payload: OneClickGenerateRequest, db: Session = Depends(get_db)) -> OneClickGenerateResponse:
-    project, user = db.get(Project, project_id), db.get(User, payload.user_id)
+def generate_one_click(project_id: UUID, payload: OneClickGenerateRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> OneClickGenerateResponse:
+    project = db.get(Project, project_id)
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found")
-    if user is None or project.owner_id != user.id:
+    if project.owner_id != current_user.id:
         raise HTTPException(status_code=403, detail="User cannot generate this project")
     try:
         get_template(payload.template_id)
@@ -35,5 +36,5 @@ def generate_one_click(project_id: UUID, payload: OneClickGenerateRequest, db: S
         bgm = db.get(MediaAsset, payload.bgm_asset_id)
         if bgm is None or bgm.project_id != project_id:
             raise HTTPException(status_code=422, detail="BGM asset must belong to the project")
-    task = generate_one_click_video.delay(str(project_id), str(user.id), payload.model_dump(mode="json"))
+    task = generate_one_click_video.delay(str(project_id), str(current_user.id), payload.model_dump(mode="json"))
     return OneClickGenerateResponse(task_id=task.id, project_id=project_id, status="queued")

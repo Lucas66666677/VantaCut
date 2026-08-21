@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 
 
 class HookCheckRequest(BaseModel):
-    user_id: UUID
+    pass
 
 
 class HookMetric(BaseModel):
@@ -34,7 +34,7 @@ class HookReport(BaseModel):
 
 
 class HookRescueRequest(BaseModel):
-    user_id: UUID
+    pass
 
 
 class HookRescueResponse(BaseModel):

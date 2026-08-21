@@ -11,7 +11,6 @@ Decision = Literal["keep", "remove"]
 class AIFeedbackCreate(BaseModel):
     """Snapshot the signals visible to the user when they corrected an AI proposal."""
 
-    user_id: UUID
     timeline_id: UUID
     clip_id: UUID | None = None
     original_ai_decision: Decision
