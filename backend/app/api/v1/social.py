@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.auth.dependencies import get_current_user
 from app.core.config import settings
 from app.db.session import get_db
 from app.models.entities import RenderJob, SocialAccount, SocialPlatform, SocialPost, SocialPostStatus, Timeline, User
@@ -41,12 +42,10 @@ def _redirect_uri(platform: SocialPlatform) -> str:
 
 
 @router.get("/oauth/{platform}/authorize", response_model=OAuthAuthorizationResponse)
-def begin_oauth(platform: str, user_id: UUID, db: Session = Depends(get_db)) -> OAuthAuthorizationResponse:
+def begin_oauth(platform: str, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> OAuthAuthorizationResponse:
     chosen = _platform(platform)
-    if db.get(User, user_id) is None:
-        raise HTTPException(status_code=404, detail="User not found")
     state, (verifier, challenge) = secrets.token_urlsafe(32), make_pkce_pair()
-    redis.from_url(settings.redis_url, decode_responses=True).setex(f"social-oauth:{state}", STATE_TTL_SECONDS, json.dumps({"user_id": str(user_id), "platform": chosen.value, "verifier": verifier}))
+    redis.from_url(settings.redis_url, decode_responses=True).setex(f"social-oauth:{state}", STATE_TTL_SECONDS, json.dumps({"user_id": str(current_user.id), "platform": chosen.value, "verifier": verifier}))
     return OAuthAuthorizationResponse(platform=chosen.value, authorization_url=get_social_client(chosen).authorization_url(state=state, code_challenge=challenge, redirect_uri=_redirect_uri(chosen)))
 
 
@@ -83,28 +82,28 @@ def complete_oauth(platform: str, code: str, state: str, db: Session = Depends(g
 
 
 @router.get("/accounts", response_model=list[SocialAccountResponse])
-def list_accounts(user_id: UUID, db: Session = Depends(get_db)) -> list[SocialAccountResponse]:
-    accounts = db.scalars(select(SocialAccount).where(SocialAccount.user_id == user_id).order_by(SocialAccount.created_at.desc())).all()
+def list_accounts(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> list[SocialAccountResponse]:
+    accounts = db.scalars(select(SocialAccount).where(SocialAccount.user_id == current_user.id).order_by(SocialAccount.created_at.desc())).all()
     return [SocialAccountResponse(id=item.id, platform=item.platform.value, platform_account_id=item.platform_account_id, display_name=item.display_name, scopes=item.scopes_json, token_expires_at=item.token_expires_at) for item in accounts]
 
 
 @router.post("/timelines/{timeline_id}/metadata", response_model=MetadataGenerationResponse, status_code=status.HTTP_202_ACCEPTED)
-def request_metadata(timeline_id: UUID, user_id: UUID, db: Session = Depends(get_db)) -> MetadataGenerationResponse:
+def request_metadata(timeline_id: UUID, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> MetadataGenerationResponse:
     timeline = db.get(Timeline, timeline_id)
     if timeline is None:
         raise HTTPException(status_code=404, detail="Timeline not found")
-    if timeline.project.owner_id != user_id:
+    if timeline.project.owner_id != current_user.id:
         raise HTTPException(status_code=403, detail="User cannot generate metadata for this timeline")
     task = generate_metadata_for_timeline.delay(str(timeline.id))
     return MetadataGenerationResponse(timeline_id=timeline.id, task_id=task.id)
 
 
 @router.post("/timelines/{timeline_id}/publish", response_model=PublishTimelineResponse, status_code=status.HTTP_202_ACCEPTED)
-def request_publish(timeline_id: UUID, payload: PublishTimelineRequest, db: Session = Depends(get_db)) -> PublishTimelineResponse:
+def request_publish(timeline_id: UUID, payload: PublishTimelineRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> PublishTimelineResponse:
     timeline, account, render = db.get(Timeline, timeline_id), db.get(SocialAccount, payload.social_account_id), db.get(RenderJob, payload.render_job_id)
     if not timeline or not account or not render:
         raise HTTPException(status_code=404, detail="Timeline, social account, or render job not found")
-    if timeline.project.owner_id != payload.user_id or account.user_id != payload.user_id or render.timeline_id != timeline.id:
+    if timeline.project.owner_id != current_user.id or account.user_id != current_user.id or render.timeline_id != timeline.id:
         raise HTTPException(status_code=403, detail="Publishing resources do not belong to this user and timeline")
     if render.status.value != "completed":
         raise HTTPException(status_code=409, detail="Render job is not completed")

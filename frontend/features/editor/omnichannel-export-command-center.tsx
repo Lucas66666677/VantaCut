@@ -31,7 +31,7 @@ export function OmnichannelExportCommandCenter({ timelineId, userId }: { timelin
   }, [batch?.batch_id, batch?.status, timelineId, userId]);
   useEffect(() => {
     if (!userId) return;
-    fetch(`${API_BASE_URL}/api/v1/social/accounts?user_id=${encodeURIComponent(userId)}`).then(async (response) => response.ok ? setAccounts(await response.json() as SocialAccount[]) : undefined).catch(() => undefined);
+    authenticatedFetch(`${API_BASE_URL}/api/v1/social/accounts`).then(async (response) => response.ok ? setAccounts(await response.json() as SocialAccount[]) : undefined).catch(() => undefined);
   }, [userId]);
 
   const start = async () => {
@@ -49,7 +49,7 @@ export function OmnichannelExportCommandCenter({ timelineId, userId }: { timelin
     const posts = await Promise.all(batch.distribution_targets.map(async (target) => {
       const account = accounts.find((item) => item.platform === target.platform); const variant = batch.variants.find((item) => item.key === target.variant);
       if (!account || !variant || variant.status !== "completed") return null;
-      const response = await fetch(`${API_BASE_URL}/api/v1/social/timelines/${timelineId}/publish`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ user_id: userId, social_account_id: account.id, render_job_id: variant.render_job_id, title: "最新影片", description: `已由 Omnichannel Export Matrix 輸出 ${variant.aspect_ratio} 版本。`, visibility: "private" }) });
+      const response = await authenticatedFetch(`${API_BASE_URL}/api/v1/social/timelines/${timelineId}/publish`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ social_account_id: account.id, render_job_id: variant.render_job_id, title: "最新影片", description: `已由 Omnichannel Export Matrix 輸出 ${variant.aspect_ratio} 版本。`, visibility: "private" }) });
       return response.ok ? target.platform : null;
     }));
     const published = posts.filter(Boolean); setMessage(published.length ? `已排入 ${published.map((item) => PLATFORM_LABEL[item as "youtube" | "tiktok"]).join("、")} 發布佇列。` : "請先在帳號設定完成 YouTube 或 TikTok OAuth 授權。");

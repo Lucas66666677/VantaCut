@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
+from app.auth.dependencies import get_current_user
 from app.db.session import get_db
 from app.models.entities import CommentStatus, ReviewComment, ReviewParticipant, ReviewRole, ReviewStatus, Timeline, TimelineReview, User
 from app.schemas.review import (
@@ -18,13 +19,10 @@ from app.services.review_exports import build_review_csv, build_review_pdf, fram
 router = APIRouter(prefix="/timelines", tags=["reviews"])
 
 
-def _timeline_for_user(db: Session, timeline_id: UUID, user_id: UUID) -> tuple[Timeline, str]:
+def _timeline_for_user(db: Session, timeline_id: UUID, user: User) -> tuple[Timeline, str]:
     timeline = db.get(Timeline, timeline_id)
-    user = db.get(User, user_id)
     if timeline is None:
         raise HTTPException(status_code=404, detail="Timeline not found")
-    if user is None:
-        raise HTTPException(status_code=403, detail="User cannot review this Timeline")
     if timeline.project.owner_id == user.id:
         return timeline, "owner"
     participant = db.scalar(select(ReviewParticipant).where(ReviewParticipant.timeline_id == timeline.id, ReviewParticipant.user_id == user.id))
@@ -43,8 +41,8 @@ def _comment_response(comment: ReviewComment) -> ReviewCommentResponse:
 
 
 @router.get("/{timeline_id}/review/comments", response_model=list[ReviewCommentResponse])
-def list_review_comments(timeline_id: UUID, user_id: UUID, db: Session = Depends(get_db)) -> list[ReviewCommentResponse]:
-    _timeline_for_user(db, timeline_id, user_id)
+def list_review_comments(timeline_id: UUID, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> list[ReviewCommentResponse]:
+    _timeline_for_user(db, timeline_id, current_user)
     comments = db.scalars(
         select(ReviewComment).where(ReviewComment.timeline_id == timeline_id).options(selectinload(ReviewComment.author)).order_by(ReviewComment.frame_number)
     ).all()
@@ -52,10 +50,10 @@ def list_review_comments(timeline_id: UUID, user_id: UUID, db: Session = Depends
 
 
 @router.post("/{timeline_id}/review/comments", response_model=ReviewCommentResponse, status_code=201)
-def create_review_comment(timeline_id: UUID, payload: CreateReviewCommentRequest, db: Session = Depends(get_db)) -> ReviewCommentResponse:
-    timeline, _ = _timeline_for_user(db, timeline_id, payload.user_id)
+def create_review_comment(timeline_id: UUID, payload: CreateReviewCommentRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> ReviewCommentResponse:
+    timeline, _ = _timeline_for_user(db, timeline_id, current_user)
     comment = ReviewComment(
-        project_id=timeline.project_id, timeline_id=timeline.id, author_id=payload.user_id,
+        project_id=timeline.project_id, timeline_id=timeline.id, author_id=current_user.id,
         frame_number=payload.frame_number, frame_rate=payload.frame_rate, time_seconds=payload.frame_number / payload.frame_rate,
         body=payload.body, annotation_json=payload.annotation.model_dump(mode="json"), status=CommentStatus.OPEN,
     )
@@ -66,8 +64,8 @@ def create_review_comment(timeline_id: UUID, payload: CreateReviewCommentRequest
 
 
 @router.patch("/{timeline_id}/review/comments/{comment_id}", response_model=ReviewCommentResponse)
-def update_review_comment(timeline_id: UUID, comment_id: UUID, payload: UpdateReviewCommentRequest, db: Session = Depends(get_db)) -> ReviewCommentResponse:
-    _timeline_for_user(db, timeline_id, payload.user_id)
+def update_review_comment(timeline_id: UUID, comment_id: UUID, payload: UpdateReviewCommentRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> ReviewCommentResponse:
+    _timeline_for_user(db, timeline_id, current_user)
     comment = db.get(ReviewComment, comment_id)
     if comment is None or comment.timeline_id != timeline_id:
         raise HTTPException(status_code=404, detail="Review comment not found")
@@ -78,16 +76,16 @@ def update_review_comment(timeline_id: UUID, comment_id: UUID, payload: UpdateRe
 
 
 @router.post("/{timeline_id}/review/decision", response_model=ReviewDecisionResponse)
-def decide_review(timeline_id: UUID, payload: ReviewDecisionRequest, db: Session = Depends(get_db)) -> ReviewDecisionResponse:
-    timeline, role = _timeline_for_user(db, timeline_id, payload.user_id)
+def decide_review(timeline_id: UUID, payload: ReviewDecisionRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> ReviewDecisionResponse:
+    timeline, role = _timeline_for_user(db, timeline_id, current_user)
     if role not in {"owner", ReviewRole.APPROVER.value}:
         raise HTTPException(status_code=403, detail="Only an approver can decide this review")
     review = db.scalar(select(TimelineReview).where(TimelineReview.timeline_id == timeline.id).with_for_update())
     if review is None:
-        review = TimelineReview(timeline_id=timeline.id, requested_by_id=payload.user_id)
+        review = TimelineReview(timeline_id=timeline.id, requested_by_id=current_user.id)
         db.add(review)
     review.status = ReviewStatus(payload.status)
-    review.decided_by_id = payload.user_id
+    review.decided_by_id = current_user.id
     review.decision_note = payload.note
     db.commit()
     return ReviewDecisionResponse(timeline_id=timeline.id, status=review.status.value, note=review.decision_note)
@@ -95,9 +93,9 @@ def decide_review(timeline_id: UUID, payload: ReviewDecisionRequest, db: Session
 
 @router.get("/{timeline_id}/review/export")
 def export_review(
-    timeline_id: UUID, user_id: UUID, format: str = Query(pattern="^(csv|pdf|json)$"), db: Session = Depends(get_db)
+    timeline_id: UUID, format: str = Query(pattern="^(csv|pdf|json)$"), current_user: User = Depends(get_current_user), db: Session = Depends(get_db)
 ) -> Response:
-    timeline, _ = _timeline_for_user(db, timeline_id, user_id)
+    timeline, _ = _timeline_for_user(db, timeline_id, current_user)
     comments = db.scalars(
         select(ReviewComment).where(ReviewComment.timeline_id == timeline.id).options(selectinload(ReviewComment.author)).order_by(ReviewComment.frame_number)
     ).all()
@@ -120,8 +118,8 @@ def export_review(
 
 
 @router.post("/{timeline_id}/review/participants", status_code=201)
-def add_review_participant(timeline_id: UUID, payload: AddReviewParticipantRequest, db: Session = Depends(get_db)) -> dict[str, str]:
-    timeline, role = _timeline_for_user(db, timeline_id, payload.user_id)
+def add_review_participant(timeline_id: UUID, payload: AddReviewParticipantRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> dict[str, str]:
+    timeline, role = _timeline_for_user(db, timeline_id, current_user)
     if role != "owner":
         raise HTTPException(status_code=403, detail="Only the project owner can invite reviewers")
     if db.get(User, payload.participant_user_id) is None:
