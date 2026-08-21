@@ -5,7 +5,7 @@ import hmac
 import secrets
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Response, status
 from fastapi.security import APIKeyHeader
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -86,7 +86,12 @@ def list_platform_api_keys(user_id: UUID, _: None = Depends(require_platform_man
     return [_key_response(key) for key in db.scalars(select(PlatformAPIKey).where(PlatformAPIKey.owner_id == user_id).order_by(PlatformAPIKey.created_at.desc())).all()]
 
 
-@router.delete("/api-keys/{api_key_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/api-keys/{api_key_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+    response_model=None,
+)
 def revoke_platform_api_key(api_key_id: UUID, user_id: UUID, _: None = Depends(require_platform_management_token), db: Session = Depends(get_db)) -> None:
     key = db.get(PlatformAPIKey, api_key_id)
     if key is None: raise HTTPException(status_code=404, detail="API key not found")
