@@ -2,6 +2,8 @@
 
 import { useMemo, useState } from "react";
 
+import { authenticatedFetch } from "@/lib/api/authenticated-fetch";
+
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
 type Emotion = "neutral" | "excited" | "calm" | "serious" | "warm" | "sad";
 
@@ -36,13 +38,13 @@ export function AiDubEditor({ projectId, timelineId, userId, sourceMediaAssetId,
   const createProfile = async () => {
     if (!consent) { setStatus("請先確認你已取得講者授權。"); return; }
     setStatus("正在建立聲音 Profile…");
-    const response = await fetch(`${API_BASE_URL}/api/v1/projects/${projectId}/voice-profiles`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ user_id: userId, source_media_asset_id: sourceMediaAssetId, name: "Project speaker", consent_confirmed: true }) });
+    const response = await authenticatedFetch(`${API_BASE_URL}/api/v1/projects/${projectId}/voice-profiles`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ source_media_asset_id: sourceMediaAssetId, name: "Project speaker", consent_confirmed: true }) });
     setStatus(response.ok ? "聲音 Profile 已排入背景處理；完成後重新載入此面板。" : "無法建立聲音 Profile。");
   };
   const generate = async () => {
     if (!cue || !voiceProfileId || !consent) { setStatus("請選擇字幕、已完成的 Profile，並確認授權。"); return; }
     setStatus("正在生成 AI 補錄…");
-    const response = await fetch(`${API_BASE_URL}/api/v1/timelines/${timelineId}/voice-replacements`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ user_id: userId, voice_profile_id: voiceProfileId, cue_id: cue.id, replacement_text: text, emotion, tempo, consent_confirmed: true }) });
+    const response = await authenticatedFetch(`${API_BASE_URL}/api/v1/timelines/${timelineId}/voice-replacements`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ voice_profile_id: voiceProfileId, cue_id: cue.id, replacement_text: text, emotion, tempo, consent_confirmed: true }) });
     setStatus(response.ok ? "AI 補錄已排入背景生成；完成後可在時間軸預覽。" : "AI 補錄請求失敗。");
   };
 

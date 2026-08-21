@@ -114,7 +114,7 @@ export function ClipInspector({ clip, timelineId, userId }: ClipInspectorProps) 
     const outputStart = (clip as ClipLayout).displayStart ?? clip.timeline_start ?? clip.source_start;
     setMorphPending(true); setMorphMessage(null);
     try {
-      const response = await fetch(`${API_BASE_URL}/api/v1/timelines/${timelineId}/voice-morphs`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ user_id: userId, source_media_asset_id: clip.source_asset_id, source_start: clip.source_start, source_end: clip.source_end, timeline_start: outputStart, character_id: morphCharacter, consent_confirmed: true }) });
+      const response = await authenticatedFetch(`${API_BASE_URL}/api/v1/timelines/${timelineId}/voice-morphs`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ source_media_asset_id: clip.source_asset_id, source_start: clip.source_start, source_end: clip.source_end, timeline_start: outputStart, character_id: morphCharacter, consent_confirmed: true }) });
       const result = await response.json() as { detail?: string };
       if (!response.ok) throw new Error(result.detail ?? "無法建立角色音色預覽");
       setMorphMessage("已送往雲端產生預覽；完成後會以派生音軌取代此段對白。");

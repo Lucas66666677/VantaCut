@@ -118,6 +118,24 @@ on:
       - "backend/tests/conftest.py"
       - "backend/tests/test_alembic_version_column_width.py"
       - "backend/requirements.txt"
+      # M4 mechanical migration: audio and voice routes
+      - "backend/app/api/v1/audio_delivery.py"
+      - "backend/app/api/v1/audio_sync.py"
+      - "backend/app/api/v1/narrations.py"
+      - "backend/app/api/v1/smart_audio_remix.py"
+      - "backend/app/api/v1/speaker.py"
+      - "backend/app/api/v1/text_to_music.py"
+      - "backend/app/api/v1/voice.py"
+      - "backend/app/schemas/audio_delivery.py"
+      - "backend/app/schemas/audio_sync.py"
+      - "backend/app/schemas/narration_tts.py"
+      - "backend/app/schemas/smart_audio_remix.py"
+      - "backend/app/schemas/speaker.py"
+      - "backend/app/schemas/soundscape.py"
+      - "backend/app/schemas/text_to_music.py"
+      - "backend/app/schemas/voice.py"
+      - "backend/tests/test_m4_audio_voice_identity.py"
+      - "backend/tests/test_voice_profile_schema.py"
       - ".github/workflows/backend-auth-tests.yml"
   push:
     branches: [main]
@@ -358,3 +376,9 @@ jobs:
       - name: Run workspace preference schema regression tests
         working-directory: backend
         run: python -m pytest tests/test_workspace_preference_schema.py -v
+      - name: Run M4 audio/voice route identity security tests
+        working-directory: backend
+        run: python -m pytest tests/test_m4_audio_voice_identity.py -v
+      - name: Run voice profile schema regression tests
+        working-directory: backend
+        run: python -m pytest tests/test_voice_profile_schema.py -v

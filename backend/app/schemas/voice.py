@@ -8,7 +8,6 @@ VoiceEmotion = Literal["neutral", "excited", "calm", "serious", "warm", "sad"]
 
 
 class CreateVoiceProfileRequest(BaseModel):
-    user_id: UUID
     source_media_asset_id: UUID
     name: str = Field(min_length=1, max_length=160)
     language: str | None = Field(default=None, max_length=20)
@@ -33,7 +32,6 @@ class VoiceProfileResponse(BaseModel):
 
 
 class GenerateVoiceReplacementRequest(BaseModel):
-    user_id: UUID
     voice_profile_id: UUID
     cue_id: str = Field(min_length=1, max_length=200)
     replacement_text: str = Field(min_length=1, max_length=600)
@@ -57,7 +55,6 @@ class VoiceReplacementResponse(BaseModel):
 
 
 class VoiceMorphRequest(BaseModel):
-    user_id: UUID
     source_media_asset_id: UUID
     source_start: float = Field(ge=0)
     source_end: float = Field(gt=0)

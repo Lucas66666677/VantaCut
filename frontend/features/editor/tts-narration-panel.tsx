@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 
+import { authenticatedFetch } from "@/lib/api/authenticated-fetch";
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 const STYLES = [
@@ -20,7 +22,7 @@ export function TTSNarrationPanel({ timelineId, userId, playheadTime = 0, onQueu
     if (!text.trim()) { setMessage("請先輸入旁白文字。"); return; }
     setPending(true); setMessage(null);
     try {
-      const response = await fetch(`${API_URL}/api/v1/timelines/${timelineId}/narrations`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ user_id: userId, text, style, speed, pitch_semitones: pitch, timeline_start: start, language: "zh", caption_preset: "viral_yellow" }) });
+      const response = await authenticatedFetch(`${API_URL}/api/v1/timelines/${timelineId}/narrations`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text, style, speed, pitch_semitones: pitch, timeline_start: start, language: "zh", caption_preset: "viral_yellow" }) });
       const data = await response.json() as { narration_id?: string; detail?: string };
       if (!response.ok || !data.narration_id) throw new Error(data.detail ?? "無法建立旁白任務");
       setMessage("旁白正在生成；完成後會自動加入音訊與字幕軌。"); onQueued?.(data.narration_id);

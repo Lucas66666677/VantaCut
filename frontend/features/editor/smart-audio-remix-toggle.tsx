@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react";
 
+import { authenticatedFetch } from "@/lib/api/authenticated-fetch";
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 type RemixStatus = "idle" | "queued" | "processing" | "completed" | "disabled" | "failed";
 
@@ -9,7 +11,7 @@ type RemixStatus = "idle" | "queued" | "processing" | "completed" | "disabled" |
 export function SmartAudioRemixToggle({ timelineId, userId }: { timelineId: string; userId: string }) {
   const [record, setRecord] = useState<{ status: RemixStatus; target_duration_seconds?: number; bpm?: number; error?: string }>({ status: "idle" });
   const refresh = async () => {
-    const response = await fetch(`${API_URL}/api/v1/timelines/${timelineId}/smart-audio-remix?user_id=${encodeURIComponent(userId)}`);
+    const response = await authenticatedFetch(`${API_URL}/api/v1/timelines/${timelineId}/smart-audio-remix`);
     if (response.ok) setRecord(await response.json() as { status: RemixStatus; target_duration_seconds?: number; bpm?: number; error?: string });
   };
   useEffect(() => { void refresh(); }, [timelineId, userId]);
@@ -22,12 +24,12 @@ export function SmartAudioRemixToggle({ timelineId, userId }: { timelineId: stri
   const apply = async () => {
     if (record.status === "queued" || record.status === "processing") return;
     if (enabled) {
-      const response = await fetch(`${API_URL}/api/v1/timelines/${timelineId}/smart-audio-remix?user_id=${encodeURIComponent(userId)}`, { method: "DELETE" });
+      const response = await authenticatedFetch(`${API_URL}/api/v1/timelines/${timelineId}/smart-audio-remix`, { method: "DELETE" });
       if (response.ok) setRecord(await response.json() as { status: RemixStatus; target_duration_seconds?: number; bpm?: number; error?: string });
       return;
     }
     setRecord({ status: "queued" });
-    const response = await fetch(`${API_URL}/api/v1/timelines/${timelineId}/smart-audio-remix`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ user_id: userId, mix_level: .16 }) });
+    const response = await authenticatedFetch(`${API_URL}/api/v1/timelines/${timelineId}/smart-audio-remix`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mix_level: .16 }) });
     if (!response.ok) { const body = await response.json() as { detail?: string }; setRecord({ status: "failed", error: body.detail ?? "無法啟動智慧音樂重混" }); }
   };
   const busy = record.status === "queued" || record.status === "processing";

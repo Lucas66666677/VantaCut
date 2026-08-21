@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react";
 
+import { authenticatedFetch } from "@/lib/api/authenticated-fetch";
+
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
 
 interface MusicRecord { status: string; prompt?: string; target_duration_seconds?: number; audio_key?: string; instrumental_only?: boolean; vocals_removed?: boolean; provider_name?: string; finishing_mode?: string; error?: string; }
@@ -16,7 +18,7 @@ export function TextToMusicPanel({ timelineId, userId }: { timelineId?: string; 
 
   const refresh = async () => {
     if (!timelineId || !userId) return;
-    const response = await fetch(`${API_BASE_URL}/api/v1/timelines/${timelineId}/generated-music?user_id=${encodeURIComponent(userId)}`);
+    const response = await authenticatedFetch(`${API_BASE_URL}/api/v1/timelines/${timelineId}/generated-music`);
     if (response.ok) setRecord(await response.json() as MusicRecord);
   };
   useEffect(() => { void refresh(); }, [timelineId, userId]);
@@ -29,7 +31,7 @@ export function TextToMusicPanel({ timelineId, userId }: { timelineId?: string; 
     if (!timelineId || !userId || !prompt.trim()) return;
     setBusy(true);
     try {
-      const response = await fetch(`${API_BASE_URL}/api/v1/timelines/${timelineId}/generated-music`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ user_id: userId, prompt, instrumental_only: instrumentalOnly, mix_level: mixLevel / 100, provider }) });
+      const response = await authenticatedFetch(`${API_BASE_URL}/api/v1/timelines/${timelineId}/generated-music`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ prompt, instrumental_only: instrumentalOnly, mix_level: mixLevel / 100, provider }) });
       const result = await response.json() as { detail?: string; target_duration_seconds?: number };
       if (!response.ok) throw new Error(result.detail ?? "無法建立配樂任務");
       setRecord({ status: "queued", prompt, target_duration_seconds: result.target_duration_seconds, instrumental_only: instrumentalOnly });

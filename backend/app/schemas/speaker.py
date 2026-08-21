@@ -5,11 +5,10 @@ from pydantic import BaseModel, Field
 
 
 class SpeakerStateRequest(BaseModel):
-    user_id: UUID
+    pass
 
 
 class GazeRedirectionRequest(BaseModel):
-    user_id: UUID
     confirm_consent: Literal[True] = Field(
         description="The creator explicitly authorises AI-based modification of the speaker's gaze."
     )
