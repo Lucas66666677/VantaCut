@@ -1,6 +1,18 @@
+import importlib.util
+from pathlib import Path
+
 from fastapi import Response, status
 
-from app.api.v1.platform import router
+
+def _load_platform_router():
+    module_path = Path(__file__).resolve().parents[1] / "app" / "api" / "v1" / "platform.py"
+    spec = importlib.util.spec_from_file_location("_vantacut_test_platform_router", module_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.router
+
+
+router = _load_platform_router()
 
 
 def test_revoke_platform_api_key_is_an_explicit_bodyless_204() -> None:
