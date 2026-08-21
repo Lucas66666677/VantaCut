@@ -61,7 +61,7 @@ def _owned_graph(db_session, owner: User):
     timeline = Timeline(project_id=project.id, name="M3 timeline", settings_json={})
     asset = MediaAsset(project_id=project.id, filename="m3.mp4", storage_key="m3/source.mp4", media_type=MediaType.VIDEO, status=MediaStatus.READY)
     db_session.add_all([timeline, asset]); db_session.flush()
-    clip = Clip(timeline_id=timeline.id, source_asset_id=asset.id, source_start=0, source_end=1, timeline_start=0, timeline_end=1)
+    clip = Clip(timeline_id=timeline.id, source_asset_id=asset.id, source_start=0, source_end=1, order_index=0)
     db_session.add(clip); db_session.flush()
     return project, timeline, asset, clip
 
