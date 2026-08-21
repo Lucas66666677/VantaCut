@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
+from app.auth.dependencies import get_current_user
 from app.models.entities import AIAnalysis, AnalysisType, MediaAsset, Timeline, User
 from app.schemas.behavioral_coach import ApplyBehavioralCoachRequest, BehavioralCoachRequest, BehavioralCoachTaskResponse
 from app.services.behavioral_coach import apply_coach_markers_to_timeline
@@ -16,17 +17,16 @@ from app.tasks.behavioral_coach_tasks import analyze_behavioral_coach
 router = APIRouter(tags=["behavioral-coach"])
 
 
-def _owner(db: Session, asset: MediaAsset, user_id: UUID) -> None:
-    user = db.get(User, user_id)
-    if user is None or asset.project.owner_id != user.id:
+def _owner(asset: MediaAsset, current_user: User) -> None:
+    if asset.project.owner_id != current_user.id:
         raise HTTPException(status_code=403, detail="User cannot access this coaching report")
 
 
 @router.post("/media/{media_asset_id}/analyze-behavioral-coach", response_model=BehavioralCoachTaskResponse, status_code=status.HTTP_202_ACCEPTED)
-def request_behavioral_coach(media_asset_id: UUID, payload: BehavioralCoachRequest, db: Session = Depends(get_db)) -> BehavioralCoachTaskResponse:
+def request_behavioral_coach(media_asset_id: UUID, payload: BehavioralCoachRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> BehavioralCoachTaskResponse:
     asset = db.get(MediaAsset, media_asset_id)
     if asset is None: raise HTTPException(status_code=404, detail="Media asset not found")
-    _owner(db, asset, payload.user_id)
+    _owner(asset, current_user)
     if payload.timeline_id:
         timeline = db.get(Timeline, payload.timeline_id)
         if timeline is None or timeline.project_id != asset.project_id: raise HTTPException(status_code=422, detail="Timeline must belong to the media project")
@@ -35,10 +35,10 @@ def request_behavioral_coach(media_asset_id: UUID, payload: BehavioralCoachReque
 
 
 @router.get("/media/{media_asset_id}/behavioral-coach-report")
-def behavioral_coach_report(media_asset_id: UUID, user_id: UUID, db: Session = Depends(get_db)) -> dict:
+def behavioral_coach_report(media_asset_id: UUID, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> dict:
     asset = db.get(MediaAsset, media_asset_id)
     if asset is None: raise HTTPException(status_code=404, detail="Media asset not found")
-    _owner(db, asset, user_id)
+    _owner(asset, current_user)
     analysis = db.scalar(select(AIAnalysis).where(
         AIAnalysis.media_asset_id == asset.id, AIAnalysis.analysis_type == AnalysisType.SPEAKER_STATE,
         AIAnalysis.model_name == "behavioral_coach_v1", AIAnalysis.status == "completed",
@@ -47,12 +47,11 @@ def behavioral_coach_report(media_asset_id: UUID, user_id: UUID, db: Session = D
     return {"analysis_id": str(analysis.id), **dict(analysis.result_json or {})}
 
 
-@router.post("/timelines/{timeline_id}/apply-behavioral-coach", status_code=status.HTTP_204_NO_CONTENT)
-def apply_behavioral_coach(timeline_id: UUID, payload: ApplyBehavioralCoachRequest, db: Session = Depends(get_db)) -> None:
+@router.post("/timelines/{timeline_id}/apply-behavioral-coach", status_code=status.HTTP_204_NO_CONTENT, response_model=None)
+def apply_behavioral_coach(timeline_id: UUID, payload: ApplyBehavioralCoachRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> None:
     timeline, analysis = db.get(Timeline, timeline_id), db.get(AIAnalysis, payload.analysis_id)
     if timeline is None or analysis is None: raise HTTPException(status_code=404, detail="Timeline or coaching report not found")
-    user = db.get(User, payload.user_id)
-    if user is None or timeline.project.owner_id != user.id or analysis.media_asset.project_id != timeline.project_id:
+    if timeline.project.owner_id != current_user.id or analysis.media_asset.project_id != timeline.project_id:
         raise HTTPException(status_code=403, detail="User cannot apply this coaching report")
     if analysis.model_name != "behavioral_coach_v1" or analysis.status != "completed":
         raise HTTPException(status_code=409, detail="Coaching analysis is not completed")

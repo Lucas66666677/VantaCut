@@ -6,7 +6,6 @@ from pydantic import BaseModel
 
 
 class BehavioralCoachRequest(BaseModel):
-    user_id: UUID
     timeline_id: UUID | None = None
 
 
@@ -17,5 +16,4 @@ class BehavioralCoachTaskResponse(BaseModel):
 
 
 class ApplyBehavioralCoachRequest(BaseModel):
-    user_id: UUID
     analysis_id: UUID

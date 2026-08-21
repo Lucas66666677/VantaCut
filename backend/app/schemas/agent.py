@@ -7,7 +7,6 @@ from pydantic import BaseModel, Field
 
 
 class AgentEditRequest(BaseModel):
-    user_id: UUID
     instruction: str = Field(min_length=1, max_length=4000)
 
 
@@ -31,7 +30,6 @@ class AgentEditRunResponse(BaseModel):
 class AgentPreviewRequest(BaseModel):
     """Client-side, compact Timeline context used only to plan a ghost proposal."""
 
-    user_id: UUID
     instruction: str = Field(min_length=1, max_length=4000)
     timeline_context: dict[str, Any] = Field(default_factory=dict)
 
@@ -43,7 +41,7 @@ class AgentPreviewResponse(BaseModel):
 
 
 class UndoTimelineRequest(BaseModel):
-    user_id: UUID
+    pass
 
 
 class UndoTimelineResponse(BaseModel):

@@ -162,6 +162,22 @@ on:
       - "backend/app/schemas/transitions.py"
       - "backend/app/schemas/visual_hooks.py"
       - "backend/tests/test_m6_editor_effects_identity.py"
+      # M7 mechanical migration: AI assistance, avatars, and coaching
+      - "backend/app/api/v1/academic.py"
+      - "backend/app/api/v1/agent.py"
+      - "backend/app/api/v1/avatar.py"
+      - "backend/app/api/v1/behavioral_coach.py"
+      - "backend/app/api/v1/inpainting.py"
+      - "backend/app/api/v1/screen_focus.py"
+      - "backend/app/schemas/academic.py"
+      - "backend/app/schemas/agent.py"
+      - "backend/app/schemas/avatar.py"
+      - "backend/app/schemas/behavioral_coach.py"
+      - "backend/app/schemas/inpainting.py"
+      - "backend/app/schemas/screen_focus.py"
+      - "backend/migrations/versions/0039_fix_ai_assistance_timestamp_defaults.py"
+      - "backend/tests/test_m7_ai_assistance_identity.py"
+      - "backend/tests/test_m7_ai_assistance_schema.py"
       - ".github/workflows/backend-auth-tests.yml"
   push:
     branches: [main]
@@ -414,3 +430,9 @@ jobs:
       - name: Run M6 editor effects route identity security tests
         working-directory: backend
         run: python -m pytest tests/test_m6_editor_effects_identity.py -v
+      - name: Run M7 AI assistance route identity security tests
+        working-directory: backend
+        run: python -m pytest tests/test_m7_ai_assistance_identity.py -v
+      - name: Run M7 AI assistance timestamp schema regression tests
+        working-directory: backend
+        run: python -m pytest tests/test_m7_ai_assistance_schema.py -v

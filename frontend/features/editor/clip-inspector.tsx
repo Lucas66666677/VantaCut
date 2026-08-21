@@ -125,7 +125,7 @@ export function ClipInspector({ clip, timelineId, userId }: ClipInspectorProps) 
     window.dispatchEvent(new CustomEvent("workspace-tool-intent", { detail: { tool, clipId: clip.id, timelineId } }));
     if (!timelineId || !userId || !clip.source_asset_id) { setContextMessage(`已將「${tool}」置頂。`); return; }
     try {
-      if (tool === "screen_focus") await fetch(`${API_BASE_URL}/api/v1/timelines/${timelineId}/analyze-screen-focus`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ user_id: userId, use_proxy: true }) });
+      if (tool === "screen_focus") await authenticatedFetch(`${API_BASE_URL}/api/v1/timelines/${timelineId}/analyze-screen-focus`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ use_proxy: true }) });
       if (tool === "ar_arrows" || tool === "code_highlight") await fetch(`${API_BASE_URL}/api/v1/timelines/${timelineId}/mechanical-ar/analyze`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ user_id: userId, media_asset_id: clip.source_asset_id, use_proxy: true }) });
       if (tool === "auto_reframe") await authenticatedFetch(`${API_BASE_URL}/api/v1/timelines/${timelineId}/auto-reframe`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ detector_stride: 2, smoothing: .75, max_pan_speed_px_per_second: 720 }) });
       setContextMessage(`已啟用「${tool}」；你可以繼續編輯其他片段。`);
