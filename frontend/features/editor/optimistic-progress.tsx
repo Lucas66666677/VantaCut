@@ -6,6 +6,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import type { ProjectStatusEvent } from "@/features/project-status/project-status-store";
 import { useOptimisticEffectsStore } from "@/features/editor/optimistic-effects-store";
 import { useOptimisticProjectJobs } from "@/features/editor/use-optimistic-project-jobs";
+import { authenticatedFetch } from "@/lib/api/authenticated-fetch";
 
 const COPY = [
   "正在教 AI 怎麼聽懂你的笑話…",
@@ -44,7 +45,7 @@ export function useDerivedPreviewUrl({ mediaAssetId, userId, taskId, completed }
     if (!mediaAssetId || !userId || !taskId || !completed) return;
     const controller = new AbortController();
     const base = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
-    void fetch(`${base}/api/v1/media/${mediaAssetId}/derived-previews/${taskId}?user_id=${encodeURIComponent(userId)}`, { signal: controller.signal })
+    void authenticatedFetch(`${base}/api/v1/media/${mediaAssetId}/derived-previews/${taskId}`, { signal: controller.signal })
       .then((response) => response.ok ? response.json() : Promise.reject(new Error("derived preview unavailable")))
       .then((payload: { preview_url?: string | null }) => setUrl(payload.preview_url ?? undefined))
       .catch((error: unknown) => { if ((error as { name?: string }).name !== "AbortError") setUrl(undefined); });
