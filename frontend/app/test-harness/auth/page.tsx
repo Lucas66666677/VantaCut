@@ -16,26 +16,12 @@ import { AuthGate } from "@/features/auth/auth-gate";
  * issues fixed alongside it (those were real, independent problems, but this
  * routing exclusion masked whether they'd actually been fixed).
  *
- * The only real production entry point wrapped by AuthGate is
- * app/studio/page.tsx, via features/onboarding/studio-launchpad.tsx, which
- * statically imports features/workspace/adaptive-editor-workspace.tsx. That
- * file imports "@/features/media/local-media-bin" and
- * "@/features/media/semantic-media-bin" — two modules that have never
- * existed anywhere in this repo's git history (confirmed via `git log
- * --all`) and were already broken on the base branch before this PR (see
- * artifacts/service-readiness/deployment-execution-final.md). Because
- * Next.js must resolve a page's entire static import graph to compile that
- * route at all — in `next dev` on first visit, exactly as in `next build` —
- * /studio cannot be rendered in this environment, independent of anything
- * this PR changes and independent of AuthGate itself. Fixing that pre-
- * existing, unrelated component is out of scope here.
- *
  * This harness exercises the exact same AuthGate / AuthForm / auth-store
- * code (unchanged, not a bypass or reimplementation) through a route with no
- * dependency on that broken chain, so the auth foundation still gets real
- * browser test coverage. See frontend/e2e/auth-foundation.spec.ts for its
- * only consumer, and app/test-harness/project-status/page.tsx for the
- * identical rationale applied to the SSE/WebSocket transport tests.
+ * code as the real studio entry without loading the editor's heavier media
+ * and WebAssembly graph. It is not a bypass or reimplementation. See
+ * frontend/e2e/auth-foundation.spec.ts for its only consumer, and
+ * app/test-harness/project-status/page.tsx for the same bounded-harness
+ * approach applied to the SSE/WebSocket transport tests.
  */
 export default function AuthHarnessPage() {
   return (

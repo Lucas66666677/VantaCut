@@ -16,7 +16,7 @@ export function useWorkspacePersistence(projectId?: string, userId?: string) {
   useEffect(() => {
     if (!projectId || !userId || hydrated) return;
     let active = true;
-    loadWorkspaceLayout(projectId, userId)
+    loadWorkspaceLayout(projectId)
       .then((layout) => { if (active) hydrate(layout ?? snapshot()); })
       .catch((reason: unknown) => { if (active) { hydrate(snapshot()); setError(reason instanceof Error ? reason.message : "工作區偏好讀取失敗"); } });
     return () => { active = false; };
@@ -25,7 +25,7 @@ export function useWorkspacePersistence(projectId?: string, userId?: string) {
   useEffect(() => {
     if (!projectId || !userId || !hydrated || !dirty) return;
     const timer = window.setTimeout(() => {
-      saveWorkspaceLayout(projectId, userId, snapshot())
+      saveWorkspaceLayout(projectId, snapshot())
         .then(markPersisted)
         .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "工作區偏好儲存失敗"));
     }, 650);

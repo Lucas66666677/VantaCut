@@ -16,6 +16,7 @@ import { useMemoryPressure } from "@/features/performance/use-memory-pressure";
 import { OfflineModeToast } from "@/features/editor/resilience-feedback";
 import { AvLatencyCalibrationSettings, AvLatencyIndicator } from "@/features/editor/av-latency-calibration";
 import { SemanticMediaBin } from "@/features/media/semantic-media-bin";
+import { useAuthStore } from "@/lib/auth/auth-store";
 import type { TimelineClipInput } from "@/types/timeline";
 import type { WorkspaceModuleId } from "@/types/workspace";
 
@@ -23,10 +24,10 @@ interface AdaptiveEditorWorkspaceProps {
   timeline: TimelineClipInput[];
   timelineId?: string;
   projectId?: string;
-  userId?: string;
 }
 
-export function AdaptiveEditorWorkspace({ timeline, timelineId, projectId, userId }: AdaptiveEditorWorkspaceProps) {
+export function AdaptiveEditorWorkspace({ timeline, timelineId, projectId }: AdaptiveEditorWorkspaceProps) {
+  const userId = useAuthStore((state) => state.user?.id);
   const mode = useWorkspaceStore((state) => state.mode);
   const modules = useWorkspaceStore((state) => state.modules);
   const applyIntent = useWorkspaceStore((state) => state.applyIntent);
@@ -54,14 +55,21 @@ export function AdaptiveEditorWorkspace({ timeline, timelineId, projectId, userI
   };
   const activeModules = (Object.keys(modules) as WorkspaceModuleId[]).filter((id) => modules[id].enabled);
 
-  return <main className="mx-auto min-h-screen max-w-7xl p-6 md:p-10">
+  return <main className="min-h-screen bg-[var(--lr-color-background)] text-[var(--lr-color-text-primary)]">
     <OfflineModeToast active={cloudDraft.status === "error"} />
-    <header className="mb-6 flex flex-wrap items-center justify-between gap-3"><div><p className="text-xs font-medium uppercase tracking-[.2em] text-cyan-300">Adaptive Workspace</p><h1 className="mt-1 text-2xl font-semibold">{mode === "welcome" ? "從一句話開始剪輯" : "你的專屬剪輯工作區"}</h1>{timelineId && userId && <p className="mt-1 text-xs text-zinc-500">雲端草稿：{cloudDraft.status === "saved" ? "已同步" : cloudDraft.status === "loading" ? "載入中" : cloudDraft.status === "error" ? "同步失敗" : "尚未建立"}</p>}<EditorSafetyStatus recoveryStatus={recovery.status} /></div><div className="flex items-center gap-2"><AvLatencyIndicator /><AvLatencyCalibrationSettings />{timelineId && userId && <MobilePreviewHandoff timelineId={timelineId} userId={userId} />}{mode !== "welcome" && <button onClick={reset} className="rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-300">回到簡潔模式</button>}</div></header>
-    <section className="rounded-2xl border border-zinc-800 bg-zinc-900 p-4 shadow-xl"><form onSubmit={submit} className="flex gap-2"><input value={prompt} onChange={(event) => setPrompt(event.target.value)} className="min-w-0 flex-1 rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-3 text-sm outline-none focus:border-cyan-400" placeholder="例如：幫我精細調色，或調整人聲混音" /><button className="rounded-xl bg-cyan-400 px-4 py-2 text-sm font-semibold text-zinc-950">交給 AI</button></form><p className="mt-2 text-xs text-zinc-400">{assistantMessage}</p>{error && <p className="mt-1 text-xs text-amber-300">{error}；目前以本機工作區繼續。</p>}</section>
-    {mode === "welcome" ? <div className="mt-5 space-y-3"><LocalMediaBin projectId={projectId} /><SemanticMediaBin projectId={projectId} /><p className="text-center text-sm text-zinc-500">拖入素材後可立刻開始剪輯；雲端同步會在背景安靜完成。</p></div> : <>
-      <nav className="mt-5 flex flex-wrap gap-2">{(Object.keys(modules) as WorkspaceModuleId[]).map((moduleId) => <button key={moduleId} onClick={() => toggleModule(moduleId)} className={`rounded-full border px-3 py-1.5 text-xs ${modules[moduleId].enabled ? "border-cyan-400/60 bg-cyan-400/10 text-cyan-100" : "border-zinc-700 text-zinc-500"}`}>{workspaceModuleLabels[moduleId]}</button>)}</nav>
-      <div className="mt-5"><SemanticMediaBin projectId={projectId} /></div>
-      <DockableWorkspace mode={mode} enabledPanels={activeModules} timeline={timeline} timelineId={timelineId} projectId={projectId} userId={userId} />
-    </>}
+    <header className="border-b border-[var(--lr-color-border)] bg-[var(--lr-color-surface)]">
+      <div className="mx-auto flex min-h-16 max-w-[96rem] flex-wrap items-center justify-between gap-3 px-4 py-3 md:px-6">
+        <div><p className="text-[11px] font-semibold uppercase tracking-[.18em] text-[var(--lr-color-secondary)]">VantaCut / Workspace</p><div className="mt-1 flex flex-wrap items-center gap-3"><h1 className="text-lg font-semibold">{mode === "welcome" ? "開始新的剪輯" : "專案工作區"}</h1>{timelineId && userId && <span className="border-l border-[var(--lr-color-border)] pl-3 text-xs text-[var(--lr-color-text-muted)]">雲端草稿：{cloudDraft.status === "saved" ? "已同步" : cloudDraft.status === "loading" ? "載入中" : cloudDraft.status === "error" ? "同步失敗" : "尚未建立"}</span>}</div><EditorSafetyStatus recoveryStatus={recovery.status} /></div>
+        <div className="flex items-center gap-2"><AvLatencyIndicator /><AvLatencyCalibrationSettings />{timelineId && userId && <MobilePreviewHandoff timelineId={timelineId} />}{mode !== "welcome" && <button onClick={reset} className="rounded-[var(--lr-radius-sm)] border border-[var(--lr-color-border)] bg-[var(--lr-color-surface-raised)] px-3 py-2 text-xs text-[var(--lr-color-text-secondary)] hover:border-[var(--lr-color-border-strong)] hover:text-[var(--lr-color-text-primary)]">精簡介面</button>}</div>
+      </div>
+    </header>
+    <div className="mx-auto max-w-[96rem] px-4 py-4 md:px-6">
+      <section className="border border-[var(--lr-color-border)] bg-[var(--lr-color-surface)] p-3 shadow-[var(--lr-shadow-sm)]"><form onSubmit={submit} className="flex gap-2"><label htmlFor="workspace-intent" className="sr-only">描述剪輯需求</label><input id="workspace-intent" value={prompt} onChange={(event) => setPrompt(event.target.value)} className="min-w-0 flex-1 rounded-[var(--lr-radius-sm)] border border-[var(--lr-color-border)] bg-[var(--lr-color-background)] px-3 py-2.5 text-sm outline-none hover:border-[var(--lr-color-border-strong)] focus:border-[var(--lr-color-primary)]" placeholder="描述工作意圖，例如：精細調色或調整人聲混音" /><button className="rounded-[var(--lr-radius-sm)] bg-[var(--lr-color-primary)] px-4 py-2 text-sm font-semibold text-[var(--lr-color-text-inverse)] hover:bg-[var(--lr-color-primary-strong)]">套用工作區</button></form><p className="mt-2 text-xs text-[var(--lr-color-text-muted)]">{assistantMessage}</p>{error && <p className="mt-1 text-xs text-[var(--lr-color-warning)]">{error}；目前以本機工作區繼續。</p>}</section>
+      {mode === "welcome" ? <div className="mt-4 space-y-3"><LocalMediaBin projectId={projectId} /><SemanticMediaBin projectId={projectId} /><p className="text-center text-sm text-[var(--lr-color-text-muted)]">拖入素材後可立即開始；雲端同步會在背景完成。</p></div> : <>
+        <nav aria-label="工作區模組" className="mt-4 flex flex-wrap gap-1 border-b border-[var(--lr-color-border)]">{(Object.keys(modules) as WorkspaceModuleId[]).map((moduleId) => <button key={moduleId} onClick={() => toggleModule(moduleId)} className={`border-b-2 px-3 py-2 text-xs font-medium ${modules[moduleId].enabled ? "border-[var(--lr-color-primary)] text-[var(--lr-color-primary-strong)]" : "border-transparent text-[var(--lr-color-text-muted)] hover:text-[var(--lr-color-text-secondary)]"}`}>{workspaceModuleLabels[moduleId]}</button>)}</nav>
+        <div className="mt-4"><SemanticMediaBin projectId={projectId} /></div>
+        <DockableWorkspace mode={mode} enabledPanels={activeModules} timeline={timeline} timelineId={timelineId} projectId={projectId} userId={userId} />
+      </>}
+    </div>
   </main>;
 }
