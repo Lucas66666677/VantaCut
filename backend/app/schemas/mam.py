@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 
 
 class ProjectStorageActor(BaseModel):
-    user_id: UUID
+    pass
 
 
 class HydrateProjectRequest(ProjectStorageActor):

@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 
 import type { TimelineClip } from "@/types/timeline";
+import { authenticatedFetch } from "@/lib/api/authenticated-fetch";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 export type WorkspaceMode = "steam" | "landscape" | "person" | "general";
@@ -48,7 +49,7 @@ export function useWorkspaceContext(clip: TimelineClip | null, timelineId?: stri
   useEffect(() => {
     if (!timelineId || !userId || !clip || clip.id.startsWith("ai-clip-")) return;
     const controller = new AbortController();
-    void fetch(`${API_URL}/api/v1/timelines/${timelineId}/clips/${clip.id}/workspace-context?user_id=${encodeURIComponent(userId)}`, { signal: controller.signal })
+    void authenticatedFetch(`${API_URL}/api/v1/timelines/${timelineId}/clips/${clip.id}/workspace-context`, { signal: controller.signal })
       .then((response) => response.ok ? response.json() : Promise.reject(new Error("workspace context unavailable")))
       .then((payload: WorkspaceContext) => setContext(payload))
       .catch((error: unknown) => { if ((error as { name?: string }).name !== "AbortError") setContext(fallback); });

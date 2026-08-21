@@ -4,6 +4,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
+from app.auth.dependencies import get_current_user
 from app.db.session import get_db
 from app.models.entities import AIAnalysis, AnalysisType, Clip, Timeline, User
 from app.schemas.workspace_context import WorkspaceContextResponse
@@ -12,11 +13,11 @@ router = APIRouter(prefix="/timelines", tags=["workspace-context"])
 
 
 @router.get("/{timeline_id}/clips/{clip_id}/workspace-context", response_model=WorkspaceContextResponse)
-def get_workspace_context(timeline_id: UUID, clip_id: UUID, user_id: UUID, db: Session = Depends(get_db)) -> WorkspaceContextResponse:
-    timeline, clip, user = db.get(Timeline, timeline_id), db.get(Clip, clip_id), db.get(User, user_id)
+def get_workspace_context(timeline_id: UUID, clip_id: UUID, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> WorkspaceContextResponse:
+    timeline, clip = db.get(Timeline, timeline_id), db.get(Clip, clip_id)
     if timeline is None or clip is None or clip.timeline_id != timeline.id:
         raise HTTPException(status_code=404, detail="Timeline clip not found")
-    if user is None or timeline.project.owner_id != user.id:
+    if timeline.project.owner_id != current_user.id:
         raise HTTPException(status_code=403, detail="User cannot view this workspace")
 
     analyses = db.query(AIAnalysis).filter(AIAnalysis.media_asset_id == clip.source_asset_id, AIAnalysis.status == "completed").all()

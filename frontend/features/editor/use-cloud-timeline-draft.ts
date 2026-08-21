@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { useTimelineStore, type CloudDraftEditorState, type CloudDraftTimeline } from "@/features/editor/timeline-store";
+import { authenticatedFetch } from "@/lib/api/authenticated-fetch";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 const BACKUP_INTERVAL_MS = 30_000;
@@ -19,7 +20,6 @@ export function useCloudTimelineDraft(timelineId?: string, userId?: string, rest
   const payload = useCallback(() => {
     const state = useTimelineStore.getState();
     return {
-      user_id: userId,
       timeline: { clips: state.clips, clip_animations: state.clipAnimations, speed_curves: state.speedCurves },
       editor_state: { zoom: state.zoom, playhead_time: state.playheadTime },
       client_updated_at: new Date().toISOString(),
@@ -29,7 +29,7 @@ export function useCloudTimelineDraft(timelineId?: string, userId?: string, rest
   const save = useCallback(async (keepalive = false) => {
     if (!timelineId || !userId || !ready.current) return;
     try {
-      const response = await fetch(`${API_URL}/api/v1/timelines/${timelineId}/cloud-draft`, {
+      const response = await authenticatedFetch(`${API_URL}/api/v1/timelines/${timelineId}/cloud-draft`, {
         method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload()), keepalive,
       });
       const result = await response.json() as CloudDraftResponse;
@@ -44,7 +44,7 @@ export function useCloudTimelineDraft(timelineId?: string, userId?: string, rest
     let cancelled = false; setStatus("loading"); ready.current = false;
     void (async () => {
       try {
-        const response = await fetch(`${API_URL}/api/v1/timelines/${timelineId}/cloud-draft?user_id=${encodeURIComponent(userId)}`);
+        const response = await authenticatedFetch(`${API_URL}/api/v1/timelines/${timelineId}/cloud-draft`);
         if (response.status === 404) { if (!cancelled) setStatus("idle"); return; }
         const result = await response.json() as CloudDraftResponse;
         if (!response.ok) throw new Error(result.detail ?? "草稿讀取失敗");

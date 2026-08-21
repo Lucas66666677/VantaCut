@@ -22,7 +22,6 @@ class WorkspaceLayoutDocument(BaseModel):
 
 
 class WorkspacePreferenceUpdateRequest(BaseModel):
-    user_id: UUID
     layout: WorkspaceLayoutDocument
 
 

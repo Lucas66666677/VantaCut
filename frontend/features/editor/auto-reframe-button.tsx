@@ -29,9 +29,9 @@ export function AutoReframeButton({ timelineId, projectId, userId, resolution = 
       });
       const configuration = await configured.json() as { detail?: string };
       if (!configured.ok) throw new Error(configuration.detail ?? "無法設定主角追蹤");
-      const rendered = await fetch(`${API_URL}/api/v1/timelines/${timelineId}/render`, {
+      const rendered = await authenticatedFetch(`${API_URL}/api/v1/timelines/${timelineId}/render`, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ user_id: userId, resolution, aspect_ratio: "9:16" }),
+        body: JSON.stringify({ resolution, aspect_ratio: "9:16" }),
       });
       const render = await rendered.json() as { detail?: string };
       if (!rendered.ok) throw new Error(typeof render.detail === "string" ? render.detail : "無法建立直式導出任務");

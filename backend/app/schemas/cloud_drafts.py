@@ -5,7 +5,6 @@ from pydantic import BaseModel, Field
 
 
 class CloudDraftPayload(BaseModel):
-    user_id: UUID
     timeline: dict[str, object]
     editor_state: dict[str, object] = Field(default_factory=dict)
     client_updated_at: datetime | None = None
@@ -20,7 +19,7 @@ class CloudDraftResponse(BaseModel):
 
 
 class MobilePreviewHandoffRequest(BaseModel):
-    user_id: UUID
+    pass
 
 
 class MobilePreviewHandoffResponse(BaseModel):
