@@ -8,7 +8,6 @@ NarrationStyle = Literal["energetic_girl", "calm_narrator", "funny_host", "warm_
 
 
 class GenerateNarrationRequest(BaseModel):
-    user_id: UUID
     text: str = Field(min_length=1, max_length=4096)
     style: NarrationStyle = "calm_narrator"
     speed: float = Field(default=1.0, ge=.7, le=1.3)

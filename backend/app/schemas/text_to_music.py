@@ -5,7 +5,6 @@ from pydantic import BaseModel, Field
 
 
 class GenerateMusicRequest(BaseModel):
-    user_id: UUID
     prompt: str = Field(min_length=3, max_length=800)
     instrumental_only: bool = True
     mix_level: float = Field(default=.16, ge=0, le=.9)

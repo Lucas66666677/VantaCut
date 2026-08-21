@@ -5,6 +5,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
+from app.auth.dependencies import get_current_user
 from app.db.session import get_db
 from app.models.entities import MediaAsset, MediaStatus, Timeline, User
 from app.schemas.smart_audio_remix import SmartAudioRemixRequest, SmartAudioRemixResponse, SmartAudioRemixStatusResponse
@@ -28,11 +29,11 @@ def _configured_bgm_id(settings: dict[str, object]) -> UUID | None:
 
 
 @router.post("/{timeline_id}/smart-audio-remix", response_model=SmartAudioRemixResponse, status_code=status.HTTP_202_ACCEPTED)
-def request_smart_audio_remix(timeline_id: UUID, payload: SmartAudioRemixRequest, db: Session = Depends(get_db)) -> SmartAudioRemixResponse:
-    timeline, user = db.get(Timeline, timeline_id), db.get(User, payload.user_id)
+def request_smart_audio_remix(timeline_id: UUID, payload: SmartAudioRemixRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> SmartAudioRemixResponse:
+    timeline = db.get(Timeline, timeline_id)
     if timeline is None:
         raise HTTPException(status_code=404, detail="Timeline not found")
-    if user is None or timeline.project.owner_id != user.id:
+    if timeline.project.owner_id != current_user.id:
         raise HTTPException(status_code=403, detail="User cannot modify this timeline")
     settings = dict(timeline.settings_json or {}); document = dict(settings.get("confirmed_timeline", {}))
     duration = payload.target_duration_seconds or _timeline_duration(document)
@@ -49,22 +50,22 @@ def request_smart_audio_remix(timeline_id: UUID, payload: SmartAudioRemixRequest
 
 
 @router.get("/{timeline_id}/smart-audio-remix", response_model=SmartAudioRemixStatusResponse)
-def smart_audio_remix_status(timeline_id: UUID, user_id: UUID, db: Session = Depends(get_db)) -> SmartAudioRemixStatusResponse:
-    timeline, user = db.get(Timeline, timeline_id), db.get(User, user_id)
+def smart_audio_remix_status(timeline_id: UUID, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> SmartAudioRemixStatusResponse:
+    timeline = db.get(Timeline, timeline_id)
     if timeline is None:
         raise HTTPException(status_code=404, detail="Timeline not found")
-    if user is None or timeline.project.owner_id != user.id:
+    if timeline.project.owner_id != current_user.id:
         raise HTTPException(status_code=403, detail="User cannot view this timeline")
     record = dict(dict(timeline.settings_json or {}).get("smart_audio_remix", {}))
     return SmartAudioRemixStatusResponse(status=str(record.get("status", "idle")), target_duration_seconds=record.get("target_duration_seconds"), bpm=record.get("bpm"), sections=list(record.get("sections", [])), error=record.get("error"))
 
 
 @router.delete("/{timeline_id}/smart-audio-remix", response_model=SmartAudioRemixStatusResponse)
-def disable_smart_audio_remix(timeline_id: UUID, user_id: UUID, db: Session = Depends(get_db)) -> SmartAudioRemixStatusResponse:
-    timeline, user = db.get(Timeline, timeline_id), db.get(User, user_id)
+def disable_smart_audio_remix(timeline_id: UUID, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> SmartAudioRemixStatusResponse:
+    timeline = db.get(Timeline, timeline_id)
     if timeline is None:
         raise HTTPException(status_code=404, detail="Timeline not found")
-    if user is None or timeline.project.owner_id != user.id:
+    if timeline.project.owner_id != current_user.id:
         raise HTTPException(status_code=403, detail="User cannot modify this timeline")
     settings = dict(timeline.settings_json or {}); record = dict(settings.get("smart_audio_remix", {}))
     record["status"] = "disabled"; settings["smart_audio_remix"] = record; timeline.settings_json = settings; db.commit()

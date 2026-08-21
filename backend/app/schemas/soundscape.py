@@ -35,7 +35,6 @@ class SoundscapePlan(BaseModel):
 
 
 class SoundscapeGenerationRequest(BaseModel):
-    user_id: UUID
     layout: SpatialLayout = "5.1"
 
 

@@ -4,7 +4,6 @@ from pydantic import BaseModel, Field
 
 
 class AudioSyncRequest(BaseModel):
-    user_id: UUID
     video_asset_id: UUID
     external_audio_asset_id: UUID
     max_offset_seconds: float = Field(default=120.0, gt=1, le=1800)

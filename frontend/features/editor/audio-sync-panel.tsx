@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 
 import { useTimelineStore } from "@/features/editor/timeline-store";
+import { authenticatedFetch } from "@/lib/api/authenticated-fetch";
 import type { TimelineClipInput } from "@/types/timeline";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
@@ -12,10 +13,10 @@ interface SyncRecord { status: "idle" | "queued" | "processing" | "completed" | 
 export function AudioSyncPanel({ timelineId, userId, videoAssetId, playheadTime }: { timelineId: string; userId: string; videoAssetId?: string; playheadTime: number }) {
   const addExternalAudioClip = useTimelineStore((state) => state.addExternalAudioClip); const upsertSyncedAudioClip = useTimelineStore((state) => state.upsertSyncedAudioClip); const muteSourceAssetAudio = useTimelineStore((state) => state.muteSourceAssetAudio);
   const [externalAudioId, setExternalAudioId] = useState(""); const [record, setRecord] = useState<SyncRecord>({ status: "idle" });
-  const refresh = async () => { const response = await fetch(`${API_URL}/api/v1/timelines/${timelineId}/audio-sync?user_id=${encodeURIComponent(userId)}`); if (!response.ok) return; const next = await response.json() as SyncRecord; setRecord(next); if (next.status === "completed" && next.audio_clip) { upsertSyncedAudioClip(next.audio_clip); if (videoAssetId) muteSourceAssetAudio(videoAssetId); } };
+  const refresh = async () => { const response = await authenticatedFetch(`${API_URL}/api/v1/timelines/${timelineId}/audio-sync`); if (!response.ok) return; const next = await response.json() as SyncRecord; setRecord(next); if (next.status === "completed" && next.audio_clip) { upsertSyncedAudioClip(next.audio_clip); if (videoAssetId) muteSourceAssetAudio(videoAssetId); } };
   useEffect(() => { void refresh(); }, [timelineId, userId]);
   useEffect(() => { if (record.status !== "queued" && record.status !== "processing") return; const id = window.setInterval(() => void refresh(), 2500); return () => window.clearInterval(id); }, [record.status]);
-  const sync = async () => { if (!videoAssetId || !externalAudioId) return; setRecord({ status: "queued" }); try { const response = await fetch(`${API_URL}/api/v1/timelines/${timelineId}/audio-sync`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ user_id: userId, video_asset_id: videoAssetId, external_audio_asset_id: externalAudioId, max_offset_seconds: 120 }) }); const data = await response.json() as { detail?: string }; if (!response.ok) throw new Error(data.detail ?? "無法建立音畫同步任務"); } catch (error) { setRecord({ status: "failed", error: error instanceof Error ? error.message : "無法建立音畫同步任務" }); } };
+  const sync = async () => { if (!videoAssetId || !externalAudioId) return; setRecord({ status: "queued" }); try { const response = await authenticatedFetch(`${API_URL}/api/v1/timelines/${timelineId}/audio-sync`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ video_asset_id: videoAssetId, external_audio_asset_id: externalAudioId, max_offset_seconds: 120 }) }); const data = await response.json() as { detail?: string }; if (!response.ok) throw new Error(data.detail ?? "無法建立音畫同步任務"); } catch (error) { setRecord({ status: "failed", error: error instanceof Error ? error.message : "無法建立音畫同步任務" }); } };
   const working = record.status === "queued" || record.status === "processing";
   return (
     <section className="rounded-xl border border-cyan-300/25 bg-zinc-950 p-4">

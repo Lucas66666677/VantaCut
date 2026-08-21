@@ -5,6 +5,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
+from app.auth.dependencies import get_current_user
 from app.db.session import get_db
 from app.models.entities import MediaAsset, Timeline, User
 from app.schemas.audio_delivery import (
@@ -26,25 +27,25 @@ def _assert_project_owner(db: Session, user_id: UUID, project_id: UUID) -> None:
 
 @router.post("/media/{media_asset_id}/extract-stems", response_model=StemExtractionResponse, status_code=status.HTTP_202_ACCEPTED)
 def request_stem_extraction(
-    media_asset_id: UUID, payload: StemExtractionRequest, db: Session = Depends(get_db)
+    media_asset_id: UUID, payload: StemExtractionRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)
 ) -> StemExtractionResponse:
     asset = db.get(MediaAsset, media_asset_id)
     if asset is None:
         raise HTTPException(status_code=404, detail="Media asset not found")
-    _assert_project_owner(db, payload.user_id, asset.project_id)
+    _assert_project_owner(db, current_user.id, asset.project_id)
     task = extract_stems.delay(str(asset.id), payload.model_name)
     return StemExtractionResponse(task_id=task.id, media_asset_id=asset.id, status="queued")
 
 
 @router.put("/timelines/{timeline_id}/stem-mix", response_model=StemMixSettingsResponse)
 def update_stem_mix(
-    timeline_id: UUID, payload: StemMixSettingsRequest, db: Session = Depends(get_db)
+    timeline_id: UUID, payload: StemMixSettingsRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)
 ) -> StemMixSettingsResponse:
     timeline = db.get(Timeline, timeline_id)
     asset = db.get(MediaAsset, payload.source_asset_id)
     if timeline is None or asset is None or asset.project_id != timeline.project_id:
         raise HTTPException(status_code=404, detail="Timeline or source asset not found in the same project")
-    _assert_project_owner(db, payload.user_id, timeline.project_id)
+    _assert_project_owner(db, current_user.id, timeline.project_id)
     stems = dict((asset.metadata_json or {}).get("stems", {}))
     if stems.get("status") != "completed":
         raise HTTPException(status_code=409, detail="Source asset has no completed stem extraction")
@@ -63,11 +64,11 @@ def update_stem_mix(
 
 @router.post("/timelines/{timeline_id}/generate-soundscape", response_model=SoundscapeTaskResponse, status_code=status.HTTP_202_ACCEPTED)
 def request_soundscape(
-    timeline_id: UUID, payload: SoundscapeGenerationRequest, db: Session = Depends(get_db)
+    timeline_id: UUID, payload: SoundscapeGenerationRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)
 ) -> SoundscapeTaskResponse:
     timeline = db.get(Timeline, timeline_id)
     if timeline is None:
         raise HTTPException(status_code=404, detail="Timeline not found")
-    _assert_project_owner(db, payload.user_id, timeline.project_id)
+    _assert_project_owner(db, current_user.id, timeline.project_id)
     task = generate_soundscape_for_timeline.delay(str(timeline.id), payload.layout)
     return SoundscapeTaskResponse(task_id=task.id, timeline_id=timeline.id, status="queued")

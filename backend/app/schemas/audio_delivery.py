@@ -7,7 +7,6 @@ from pydantic import BaseModel, Field
 
 
 class StemExtractionRequest(BaseModel):
-    user_id: UUID
     model_name: Literal["htdemucs", "htdemucs_ft", "htdemucs_6s"] = "htdemucs"
 
 
@@ -30,7 +29,6 @@ class StemChannelSettings(BaseModel):
 
 
 class StemMixSettingsRequest(BaseModel):
-    user_id: UUID
     source_asset_id: UUID
     dialogue: StemChannelSettings = Field(default_factory=StemChannelSettings)
     music: StemChannelSettings = Field(default_factory=StemChannelSettings)
