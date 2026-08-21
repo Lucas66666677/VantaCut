@@ -122,7 +122,10 @@ def test_m4_wrong_user_and_legacy_spoofed_identity_cannot_queue_or_mutate(db_ses
     original_settings = copy.deepcopy(timeline.settings_json)
     for method, url, body in _requests(*graph):
         spoofed = {**(body or {}), "user_id": str(owner.id)}
-        response = getattr(client, method)(url, json=spoofed, headers=_auth(attacker))
+        kwargs = {"headers": _auth(attacker)}
+        if body is not None:
+            kwargs["json"] = spoofed
+        response = getattr(client, method)(url, **kwargs)
         assert response.status_code == 403, (method, url, response.text)
     assert calls == []
     db_session.refresh(timeline)
