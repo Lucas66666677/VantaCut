@@ -13,7 +13,6 @@ class ReviewAnnotation(BaseModel):
 
 
 class CreateReviewCommentRequest(BaseModel):
-    user_id: UUID
     frame_number: int = Field(ge=0)
     frame_rate: float = Field(gt=0, le=240)
     body: str = Field(min_length=1, max_length=10_000)
@@ -21,7 +20,6 @@ class CreateReviewCommentRequest(BaseModel):
 
 
 class UpdateReviewCommentRequest(BaseModel):
-    user_id: UUID
     status: Literal["open", "resolved"]
 
 
@@ -38,7 +36,6 @@ class ReviewCommentResponse(BaseModel):
 
 
 class ReviewDecisionRequest(BaseModel):
-    user_id: UUID
     status: Literal["in_review", "approved", "changes_requested"]
     note: str | None = Field(default=None, max_length=5_000)
 
@@ -50,6 +47,5 @@ class ReviewDecisionResponse(BaseModel):
 
 
 class AddReviewParticipantRequest(BaseModel):
-    user_id: UUID
     participant_user_id: UUID
     role: Literal["reviewer", "approver"]

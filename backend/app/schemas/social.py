@@ -41,7 +41,6 @@ class MetadataGenerationResponse(BaseModel):
 
 
 class PublishTimelineRequest(BaseModel):
-    user_id: UUID
     social_account_id: UUID
     render_job_id: UUID
     title: str = Field(min_length=1, max_length=2200)

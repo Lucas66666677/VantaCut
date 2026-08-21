@@ -448,3 +448,9 @@ jobs:
       - name: Run M11 media lifecycle ownership security tests
         working-directory: backend
         run: python -m pytest tests/test_m11_media_ownership_identity.py -v
+      - name: Run M12 review and social route identity security tests
+        working-directory: backend
+        run: python -m pytest tests/test_m12_review_social_identity.py -v
+      - name: Run M12 review and social timestamp schema regression tests
+        working-directory: backend
+        run: python -m pytest tests/test_m12_review_social_schema.py -v
