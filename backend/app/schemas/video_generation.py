@@ -7,7 +7,6 @@ from pydantic import BaseModel, Field, model_validator
 
 
 class BRollGenerationRequest(BaseModel):
-    user_id: UUID
     source_asset_id: UUID
     output_start: float | None = Field(default=None, ge=0, description="Final-timeline position. Omit to select an information-dense, visually static moment.")
     duration_seconds: float = Field(default=4, ge=3, le=5)
@@ -17,7 +16,6 @@ class BRollGenerationRequest(BaseModel):
 
 
 class VideoOutpaintRequest(BaseModel):
-    user_id: UUID
     media_asset_id: UUID
     target_aspect_ratio: Literal["9:16"] = "9:16"
     start_time: float = Field(default=0, ge=0)

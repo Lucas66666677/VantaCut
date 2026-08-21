@@ -11,7 +11,6 @@ DEFAULT_PART_VOCABULARY = [
 
 
 class MechanicalARRequest(BaseModel):
-    user_id: UUID
     media_asset_id: UUID
     code_asset_id: str | None = Field(default=None, max_length=80)
     use_proxy: bool = True

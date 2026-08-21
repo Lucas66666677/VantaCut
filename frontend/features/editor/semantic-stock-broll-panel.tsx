@@ -4,23 +4,24 @@ import { useEffect, useState } from "react";
 
 import { useTimelineStore } from "@/features/editor/timeline-store";
 import type { TimelineClipInput } from "@/types/timeline";
+import { authenticatedFetch } from "@/lib/api/authenticated-fetch";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 interface StockBRollRecord { status: "idle" | "queued" | "processing" | "completed" | "failed"; clips: TimelineClipInput[]; error?: string; }
 
 /** Triggers the server-side transcript -> Pexels -> MinIO pipeline and mirrors completed B-Roll into Zustand. */
-export function SemanticStockBRollPanel({ timelineId, userId, sourceAssetId }: { timelineId: string; userId: string; sourceAssetId?: string }) {
+export function SemanticStockBRollPanel({ timelineId, sourceAssetId }: { timelineId: string; userId: string; sourceAssetId?: string }) {
   const upsertBRollClips = useTimelineStore((state) => state.upsertBRollClips);
   const [record, setRecord] = useState<StockBRollRecord>({ status: "idle", clips: [] }); const [pending, setPending] = useState(false);
   const refresh = async () => {
-    const response = await fetch(`${API_URL}/api/v1/timelines/${timelineId}/b-roll/semantic-stock?user_id=${encodeURIComponent(userId)}`);
+    const response = await authenticatedFetch(`${API_URL}/api/v1/timelines/${timelineId}/b-roll/semantic-stock`);
     if (!response.ok) return;
     const next = await response.json() as StockBRollRecord; setRecord(next);
     if (next.status === "completed" || next.status === "failed") setPending(false);
     if (next.status === "completed") upsertBRollClips(next.clips);
   };
-  useEffect(() => { void refresh(); }, [timelineId, userId]);
+  useEffect(() => { void refresh(); }, [timelineId]);
   useEffect(() => {
     if (record.status !== "queued" && record.status !== "processing") return;
     const interval = window.setInterval(() => void refresh(), 3000);
@@ -30,7 +31,7 @@ export function SemanticStockBRollPanel({ timelineId, userId, sourceAssetId }: {
     if (!sourceAssetId) return;
     setPending(true); setRecord({ status: "processing", clips: [] });
     try {
-      const response = await fetch(`${API_URL}/api/v1/timelines/${timelineId}/b-roll/semantic-stock`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ user_id: userId, source_asset_id: sourceAssetId, aspect_ratio: "9:16", duration_seconds: 4, max_clips: 3 }) });
+      const response = await authenticatedFetch(`${API_URL}/api/v1/timelines/${timelineId}/b-roll/semantic-stock`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ source_asset_id: sourceAssetId, aspect_ratio: "9:16", duration_seconds: 4, max_clips: 3 }) });
       const result = await response.json() as { detail?: string }; if (!response.ok) throw new Error(result.detail ?? "無法建立語意 B-Roll 任務");
     } catch (error) { setPending(false); setRecord({ status: "failed", clips: [], error: error instanceof Error ? error.message : "無法建立語意 B-Roll 任務" }); }
   };

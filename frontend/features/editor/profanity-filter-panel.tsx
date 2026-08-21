@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { authenticatedFetch } from "@/lib/api/authenticated-fetch";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 type SfxStyle = "beep" | "chicken" | "coin";
@@ -18,7 +19,7 @@ const SFX: Array<{ id: SfxStyle; label: string; description: string }> = [
   { id: "coin", label: "金幣聲", description: "遊戲實況感" },
 ];
 
-export function ProfanityFilterPanel({ timelineId, userId, onQueued }: ProfanityFilterPanelProps) {
+export function ProfanityFilterPanel({ timelineId, onQueued }: ProfanityFilterPanelProps) {
   const [sfxStyle, setSfxStyle] = useState<SfxStyle>("beep");
   const [emojiStyle, setEmojiStyle] = useState<EmojiStyle>("angry");
   const [pending, setPending] = useState(false);
@@ -27,9 +28,9 @@ export function ProfanityFilterPanel({ timelineId, userId, onQueued }: Profanity
   const apply = async () => {
     setPending(true); setMessage(null);
     try {
-      const response = await fetch(`${API_URL}/api/v1/timelines/${timelineId}/profanity-filter`, {
+      const response = await authenticatedFetch(`${API_URL}/api/v1/timelines/${timelineId}/profanity-filter`, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ user_id: userId, sfx_style: sfxStyle, emoji_style: emojiStyle }),
+        body: JSON.stringify({ sfx_style: sfxStyle, emoji_style: emojiStyle }),
       });
       const body = await response.json() as { task_id?: string; detail?: string };
       if (!response.ok || !body.task_id) throw new Error(body.detail ?? "無法建立敏感詞過濾任務");

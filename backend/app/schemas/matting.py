@@ -13,7 +13,6 @@ class MattingPoint(BaseModel):
 
 
 class VideoMattingRequest(BaseModel):
-    user_id: UUID
     mode: Literal["click", "text"]
     frame_time: float = Field(default=0, ge=0)
     points: list[MattingPoint] = Field(default_factory=list, max_length=16)

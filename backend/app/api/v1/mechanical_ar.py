@@ -2,10 +2,11 @@ import uuid
 from pathlib import Path
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
+from app.auth.dependencies import get_current_user
 from app.models.entities import MediaAsset, Timeline, User
 from app.schemas.mechanical_ar import MechanicalARRequest, MechanicalARUploadResponse, MechanicalARTaskResponse
 from app.services.storage import upload_bytes
@@ -16,11 +17,11 @@ router = APIRouter(prefix="/timelines", tags=["mechanical-ar"])
 MAX_CODE_BYTES = 1_000_000
 
 
-def _authorise(timeline_id: UUID, user_id: UUID, db: Session) -> Timeline:
-    timeline, user = db.get(Timeline, timeline_id), db.get(User, user_id)
+def _authorise(timeline_id: UUID, current_user: User, db: Session) -> Timeline:
+    timeline = db.get(Timeline, timeline_id)
     if timeline is None:
         raise HTTPException(status_code=404, detail="Timeline not found")
-    if user is None or timeline.project.owner_id != user.id:
+    if timeline.project.owner_id != current_user.id:
         raise HTTPException(status_code=403, detail="User cannot use mechanical AR on this timeline")
     return timeline
 
@@ -28,11 +29,11 @@ def _authorise(timeline_id: UUID, user_id: UUID, db: Session) -> Timeline:
 @router.post("/{timeline_id}/mechanical-ar/code", response_model=MechanicalARUploadResponse, status_code=status.HTTP_201_CREATED)
 async def upload_mechanical_program(
     timeline_id: UUID,
-    user_id: UUID = Form(...),
     file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> MechanicalARUploadResponse:
-    timeline = _authorise(timeline_id, user_id, db)
+    timeline = _authorise(timeline_id, current_user, db)
     extension = Path(file.filename or "").suffix.lower()
     if extension not in {".py", ".hex"}:
         raise HTTPException(status_code=422, detail="Only .py and Intel HEX .hex program files are accepted")
@@ -54,8 +55,8 @@ async def upload_mechanical_program(
 
 
 @router.post("/{timeline_id}/mechanical-ar/analyze", response_model=MechanicalARTaskResponse, status_code=status.HTTP_202_ACCEPTED)
-def request_mechanical_ar_analysis(timeline_id: UUID, payload: MechanicalARRequest, db: Session = Depends(get_db)) -> MechanicalARTaskResponse:
-    timeline = _authorise(timeline_id, payload.user_id, db)
+def request_mechanical_ar_analysis(timeline_id: UUID, payload: MechanicalARRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> MechanicalARTaskResponse:
+    timeline = _authorise(timeline_id, current_user, db)
     asset = db.get(MediaAsset, payload.media_asset_id)
     if asset is None or asset.project_id != timeline.project_id:
         raise HTTPException(status_code=404, detail="Media asset was not found in this Timeline project")

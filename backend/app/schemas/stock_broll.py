@@ -5,7 +5,6 @@ from pydantic import BaseModel, Field
 
 
 class SemanticStockBRollRequest(BaseModel):
-    user_id: UUID
     source_asset_id: UUID
     aspect_ratio: Literal["16:9", "9:16"] = "9:16"
     duration_seconds: float = Field(default=4.0, ge=3.0, le=5.0)

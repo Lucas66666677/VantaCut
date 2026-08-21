@@ -2,6 +2,7 @@
 
 import { useState, type PointerEvent } from "react";
 import { useOptimisticEffectsStore } from "@/features/editor/optimistic-effects-store";
+import { authenticatedFetch } from "@/lib/api/authenticated-fetch";
 
 type PromptPoint = { x: number; y: number; positive: boolean };
 
@@ -20,7 +21,7 @@ const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
  * Overlay this on the preview canvas. Click = foreground, Shift+click = exclusion point.
  * The request remains source-timestamped so a later server render is independent of viewport size.
  */
-export function MattingPromptLayer({ mediaAssetId, userId, currentTimeMs, className, onQueued }: MattingPromptLayerProps) {
+export function MattingPromptLayer({ mediaAssetId, currentTimeMs, className, onQueued }: MattingPromptLayerProps) {
   const [points, setPoints] = useState<PromptPoint[]>([]);
   const [textPrompt, setTextPrompt] = useState("");
   const [mode, setMode] = useState<"click" | "text">("click");
@@ -43,11 +44,10 @@ export function MattingPromptLayer({ mediaAssetId, userId, currentTimeMs, classN
     setPending(true); setError(null);
     const optimisticId = begin({ kind: "matting", mediaAssetId, message: "已先套用去背預覽，AI 正在細化遮罩。" });
     try {
-      const response = await fetch(`${apiBase}/api/v1/media/${mediaAssetId}/matting`, {
+      const response = await authenticatedFetch(`${apiBase}/api/v1/media/${mediaAssetId}/matting`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          user_id: userId,
           mode,
           frame_time: currentTimeMs / 1000,
           points,

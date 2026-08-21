@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
+from app.auth.dependencies import get_current_user
 from app.models.entities import RenderJob, User
 from app.schemas.forensics import ForensicVerificationResponse, VerifyForensicRenderRequest
 from app.services.forensic_provenance import ForensicError, extract_forensic_watermark, verify_c2pa_asset
@@ -21,12 +22,13 @@ router = APIRouter(prefix="/renders", tags=["forensics"])
 def verify_exported_render(
     render_job_id: UUID,
     payload: VerifyForensicRenderRequest,
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> ForensicVerificationResponse:
-    render_job, user = db.get(RenderJob, render_job_id), db.get(User, payload.user_id)
+    render_job = db.get(RenderJob, render_job_id)
     if render_job is None or not render_job.output_key:
         raise HTTPException(status_code=404, detail="Completed render not found")
-    if user is None or render_job.project.owner_id != user.id:
+    if render_job.project.owner_id != current_user.id:
         raise HTTPException(status_code=403, detail="User cannot verify this render")
     with tempfile.TemporaryDirectory(prefix="verify-forensic-") as temp_dir:
         asset = Path(temp_dir) / f"asset.{render_job.output_format}"
