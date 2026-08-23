@@ -89,6 +89,7 @@ jobs:
           RENDER_DOWNLOAD_PATH: ${{ github.workspace }}/artifacts/rendered-from-browser.mp4
         run: |
           export RENDER_DOWNLOAD_URL="$(jq -r .download_url ../artifacts/render-result.json)"
+          sudo rm -rf node_modules
           npm ci
           npx playwright install --with-deps chromium
           npm run test:e2e
