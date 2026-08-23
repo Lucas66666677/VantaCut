@@ -297,7 +297,7 @@ services:
         condition: service_healthy
       minio-init:
         condition: service_completed_successfully
-    command: celery -A app.worker.celery_app worker --loglevel=info
+    command: celery -A app.worker.celery_app worker --loglevel=info --queues=celery,render
 
   # Opt-in: needs NVIDIA Container Toolkit plus a tested MV-HEVC-capable driver.
   # Apple spatial metadata writing/verification is intentionally supplied by a macOS bridge command.
