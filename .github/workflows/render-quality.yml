@@ -31,8 +31,8 @@ jobs:
       POSTGRES_DB: video_editor
       POSTGRES_USER: video_editor
       POSTGRES_PASSWORD: video_editor_dev
-      NEXT_PUBLIC_API_URL: http://127.0.0.1:8000
-      CORS_ALLOWED_ORIGINS: http://127.0.0.1:3000
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+      CORS_ALLOWED_ORIGINS: http://localhost:3000
       JWT_SECRET_KEY: render-contract-ci-only-secret-do-not-reuse-1234567890
     steps:
       - uses: actions/checkout@v4
@@ -87,7 +87,7 @@ jobs:
       - name: Install Playwright and execute browser download assertion
         working-directory: frontend
         env:
-          PLAYWRIGHT_BASE_URL: http://127.0.0.1:3000
+          PLAYWRIGHT_BASE_URL: http://localhost:3000
           RENDER_DOWNLOAD_PATH: ${{ github.workspace }}/artifacts/rendered-from-browser.mp4
           RENDER_DOWNLOAD_ACCESS_TOKEN: ${{ steps.render.outputs.access_token }}
         run: |
