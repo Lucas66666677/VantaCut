@@ -40,8 +40,17 @@ def duration(metadata: dict[str, Any]) -> float:
 
 
 def frame_at(path: Path, seconds: float) -> np.ndarray:
-    capture = cv2.VideoCapture(str(path)); capture.set(cv2.CAP_PROP_POS_MSEC, seconds * 1000)
-    ok, frame = capture.read(); capture.release()
+    capture = cv2.VideoCapture(str(path))
+    fps = float(capture.get(cv2.CAP_PROP_FPS))
+    if fps <= 0:
+        capture.release(); raise QualityGateError(f"Cannot determine frame rate for {path}")
+    target_frame = max(0, round(seconds * fps))
+    ok, frame = False, None
+    for _ in range(target_frame + 1):
+        ok, frame = capture.read()
+        if not ok:
+            break
+    capture.release()
     if not ok: raise QualityGateError(f"Cannot decode a frame at {seconds:.3f}s from {path}")
     return cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
