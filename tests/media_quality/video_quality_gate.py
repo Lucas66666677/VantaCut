@@ -40,10 +40,21 @@ def duration(metadata: dict[str, Any]) -> float:
 
 
 def frame_at(path: Path, seconds: float) -> np.ndarray:
-    capture = cv2.VideoCapture(str(path)); capture.set(cv2.CAP_PROP_POS_MSEC, seconds * 1000)
-    ok, frame = capture.read(); capture.release()
-    if not ok: raise QualityGateError(f"Cannot decode a frame at {seconds:.3f}s from {path}")
-    return cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    stream = video_stream(probe(path))
+    rate = str(stream.get("r_frame_rate") or stream.get("avg_frame_rate") or "0/1")
+    numerator, denominator = (float(value) for value in rate.split("/", 1))
+    fps = numerator / denominator if denominator else 0
+    if fps <= 0:
+        raise QualityGateError(f"Cannot determine frame rate for {path}")
+    target_frame = max(0, round(seconds * fps))
+    result = subprocess.run([
+        "ffmpeg", "-v", "error", "-i", str(path), "-vf", f"select=eq(n\\,{target_frame})",
+        "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "gray", "pipe:1",
+    ], check=True, capture_output=True)
+    width, height = int(stream["width"]), int(stream["height"])
+    if len(result.stdout) != width * height:
+        raise QualityGateError(f"Cannot decode a frame at {seconds:.3f}s from {path}")
+    return np.frombuffer(result.stdout, dtype=np.uint8).reshape((height, width))
 
 
 def ssim(left: np.ndarray, right: np.ndarray) -> float:
