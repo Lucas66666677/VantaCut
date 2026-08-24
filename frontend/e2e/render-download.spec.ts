@@ -15,10 +15,10 @@ test("editor page is reachable and the completed render MP4 is downloadable", as
   }, accessToken as string);
 
   await page.goto("/studio");
-  const intentInput = page.getByPlaceholder("例如：幫我精細調色，或調整人聲混音");
+  const intentInput = page.getByLabel("描述剪輯需求");
   await expect(intentInput).toBeVisible();
   await intentInput.fill("剪輯");
-  await page.getByRole("button", { name: "交給 AI" }).click();
+  await page.getByRole("button", { name: "套用工作區" }).click();
   await expect(page.getByText("AI 粗剪審閱時間軸")).toBeVisible();
   // The URL is a presigned URL created after the real Celery render. Request
   // that real artifact in a browser page rather than replacing the studio UI
