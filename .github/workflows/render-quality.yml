@@ -74,6 +74,7 @@ jobs:
           response="$(curl --fail --silent --show-error -X POST "http://127.0.0.1:8000/api/v1/timelines/$timeline_id/render" -H 'content-type: application/json' -H "authorization: Bearer $access_token" --data '{"resolution":"1080p","aspect_ratio":"16:9"}')"
           echo "$response" | jq .
           echo "render_job_id=$(echo "$response" | jq -r .render_job_id)" >> "$GITHUB_OUTPUT"
+          echo "access_token=$access_token" >> "$GITHUB_OUTPUT"
       - name: Wait for render output and create a presigned browser download URL
         run: |
           backend_id="$(docker compose ps -q backend)"
@@ -87,6 +88,7 @@ jobs:
         env:
           PLAYWRIGHT_BASE_URL: http://127.0.0.1:3000
           RENDER_DOWNLOAD_PATH: ${{ github.workspace }}/artifacts/rendered-from-browser.mp4
+          RENDER_DOWNLOAD_ACCESS_TOKEN: ${{ steps.render.outputs.access_token }}
         run: |
           export RENDER_DOWNLOAD_URL="$(jq -r .download_url ../artifacts/render-result.json)"
           sudo rm -rf node_modules

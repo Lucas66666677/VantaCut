@@ -8,6 +8,8 @@ __pycache__/
 node_modules/
 .next/
 dist/
-media/
+# Keep generated media at the repository root out of version control without
+# ignoring the real frontend feature directory at frontend/features/media/.
+/media/
 frontend/public/ort/
 frontend/public/models/**/*.onnx
