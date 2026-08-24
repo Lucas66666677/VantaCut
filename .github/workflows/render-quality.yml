@@ -32,6 +32,7 @@ jobs:
       POSTGRES_USER: video_editor
       POSTGRES_PASSWORD: video_editor_dev
       NEXT_PUBLIC_API_URL: http://127.0.0.1:8000
+      CORS_ALLOWED_ORIGINS: http://127.0.0.1:3000
       JWT_SECRET_KEY: render-contract-ci-only-secret-do-not-reuse-1234567890
     steps:
       - uses: actions/checkout@v4
