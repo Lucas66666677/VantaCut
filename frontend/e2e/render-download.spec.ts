@@ -24,7 +24,9 @@ test("editor page is reachable and the completed render MP4 is downloadable", as
   // that real artifact in a browser page rather than replacing the studio UI
   // with a test-only download element.
   const downloadPage = await page.context().newPage();
-  const [download] = await Promise.all([downloadPage.waitForEvent("download"), downloadPage.goto(renderUrl!)]);
+  const downloadPromise = downloadPage.waitForEvent("download");
+  await downloadPage.evaluate((url) => window.location.assign(url), renderUrl!);
+  const download = await downloadPromise;
   await mkdir(dirname(destination!), { recursive: true });
   await download.saveAs(destination!);
   await downloadPage.close();
