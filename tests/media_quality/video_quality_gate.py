@@ -41,7 +41,7 @@ def duration(metadata: dict[str, Any]) -> float:
 
 def frame_at(path: Path, seconds: float) -> np.ndarray:
     stream = video_stream(probe(path))
-    rate = str(stream.get("avg_frame_rate") or stream.get("r_frame_rate") or "0/1")
+    rate = str(stream.get("r_frame_rate") or stream.get("avg_frame_rate") or "0/1")
     numerator, denominator = (float(value) for value in rate.split("/", 1))
     fps = numerator / denominator if denominator else 0
     if fps <= 0:
