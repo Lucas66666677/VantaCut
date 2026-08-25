@@ -37,4 +37,4 @@ COPY --chown=app:app . ./
 USER app
 
 EXPOSE 8000
-CMD ["bash", "start.sh"]
+CMD ["sh", "start.sh"]
