@@ -37,7 +37,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Build and start test database, Redis, object storage, API, worker, and UI
-        run: docker compose up -d --build postgres redis minio minio-init backend worker frontend
+        # A normal cold build completes in a few minutes. Bound this individual
+        # external-image/build step so a stalled Docker daemon produces diagnostics
+        # instead of consuming the entire job timeout without a useful failure.
+        run: timeout 15m docker compose up -d --build postgres redis minio minio-init backend worker frontend
       - name: Apply database migrations
         run: docker compose run --rm backend alembic upgrade head
       - name: Wait for services
