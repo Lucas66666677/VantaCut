@@ -6,10 +6,21 @@ RUN npm ci
 FROM node:22-alpine AS builder
 WORKDIR /app
 ARG NEXT_PUBLIC_API_URL
+# Twelve modules under features/ read NEXT_PUBLIC_API_BASE_URL rather than
+# NEXT_PUBLIC_API_URL, and nothing ever set it -- so they were inlining their
+# own http://localhost:8000 fallback even on a correctly configured deploy.
+# Default it to the same origin; an explicit build arg still wins.
+ARG NEXT_PUBLIC_API_BASE_URL=$NEXT_PUBLIC_API_URL
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL \
+    NEXT_PUBLIC_API_BASE_URL=$NEXT_PUBLIC_API_BASE_URL \
     NEXT_TELEMETRY_DISABLED=1
 COPY --from=dependencies /app/node_modules ./node_modules
 COPY . .
+# Fail the image build -- not the browser, later, silently -- when the origin
+# about to be inlined is loopback, private, or malformed. Runs here and not in
+# `npm run build` because CI's frontend-build job compiles against
+# http://127.0.0.1:3000 deliberately; only this image is bound for production.
+RUN node scripts/check-public-api-origin.mjs
 RUN npm run build
 
 FROM node:22-alpine AS runner

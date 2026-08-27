@@ -8,6 +8,7 @@
     "dev": "npm run prepare:assets && next dev",
     "build": "npm run prepare:assets && next build",
     "start": "next start",
+    "test:config": "node --test \"scripts/*.test.mjs\"",
     "test:e2e": "playwright test",
     "lint": "next lint"
   },

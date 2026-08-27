@@ -145,6 +145,13 @@ jobs:
         run: npm ci
       - name: Typecheck
         run: npx tsc --noEmit
+      # `node --test` on Node 22 -- no new dependency. Guards
+      # scripts/check-public-api-origin.mjs, which is what stops a production
+      # image from inlining a loopback/private backend origin into the client
+      # bundle. The guard itself runs in Dockerfile.production, not here: the
+      # build step below deliberately uses a loopback URL.
+      - name: Verify the backend-origin guard still catches its regressions
+        run: npm run test:config
       - name: Production build
         # Same value as the e2e job, and same reason: nothing here talks to a
         # real backend, and this only needs to be a syntactically valid URL for
