@@ -61,42 +61,10 @@ jobs:
       - name: Verify migrated frontend callers do not reintroduce caller identity
         run: |
           node -e "const fs=require('fs'); const p='features/editor/mobile-preview-handoff.tsx'; const s=fs.readFileSync(p,'utf8'); if(!s.includes('authenticatedFetch(') || s.includes('user_id')) { throw new Error(p + ' must use authenticatedFetch without client caller identity'); }"
-      # No "Lint" step: this repo has no ESLint config or `eslint` dependency
-      # anywhere (verified — not something this PR's scope introduced or
-      # removed), so `npm run lint` (`next lint`) has nothing to run against
-      # and would fail on repo-wide tooling absence unrelated to this diff.
-      #
-      # No whole-project "Typecheck" (`tsc --noEmit`) or "next build" step
-      # either, and deliberately so: this repo already has a pre-existing,
-      # unrelated broken import in
-      # frontend/features/workspace/adaptive-editor-workspace.tsx (it imports
-      # "@/features/media/local-media-bin" and
-      # "@/features/media/semantic-media-bin", neither of which has ever
-      # existed anywhere in this repo's git history — confirmed via `git log
-      # --all` and via `git show` against this PR's base branch, i.e. it
-      # predates this PR entirely). A project-wide `tsc --noEmit` or `next
-      # build` type-checks/compiles every route up front and would always
-      # fail on that unrelated file, and it cannot be scoped to exclude just
-      # that file without also excluding this PR's own app/studio/page.tsx
-      # (which imports the same broken chain transitively through the studio
-      # route tree). Fixing that pre-existing bug is out of scope for this
-      # PR (it would mean fabricating two unrelated media-bin components from
-      # scratch). This repo's own established real-world pattern
-      # (docker-compose.yml's frontend service, and the existing
-      # render-quality.yml CI job) has only ever run this app with `next dev`
-      # — which compiles/type-checks lazily, per visited route — never a full
-      # production build. We follow that same established pattern here: run
-      # `next dev` and drive Playwright against it. The auth foundation and
-      # project-status transport code under test (lib/auth/*,
-      # features/auth/*, features/project-status/use-project-status.ts, and
-      # the Playwright-only harnesses at app/test-harness/auth and
-      # app/test-harness/project-status) has zero dependency on the
-      # broken adaptive-editor-workspace.tsx import chain, so this still
-      # gives real, meaningful pass/fail evidence for this PR's diff. (The
-      # real /studio entry point still wraps StudioLaunchpad in AuthGate
-      # unchanged — the harness routes exist only because /studio itself
-      # cannot compile at all in this environment until that unrelated bug
-      # is fixed, independent of AuthGate.)
+      # Type-checking, linting and the production build live in the separate
+      # `frontend-build` job below rather than here, so a compile failure and an
+      # e2e failure stay independently attributable. They are NOT skipped: the
+      # reason they used to be skipped no longer exists (see that job).
       # Browser binary only, no `--with-deps` apt-get install: two
       # consecutive runs of this workflow hung indefinitely (still no output
       # after 9+ minutes, well past the point a healthy `apt-get install`
@@ -135,3 +103,52 @@ jobs:
         with:
           name: frontend-auth-checks-playwright-report
           path: frontend/playwright-report/
+
+  frontend-build:
+    # This job exists because the reason it did not exist has been fixed.
+    #
+    # Historically this workflow ran only `next dev` and deliberately had no
+    # `tsc --noEmit` and no `next build`, because
+    # frontend/features/workspace/adaptive-editor-workspace.tsx imported
+    # "@/features/media/local-media-bin" and "@/features/media/semantic-media-bin",
+    # neither of which existed anywhere in the repo. A project-wide typecheck or
+    # production build compiles every route up front and always failed on that
+    # chain -- and it could not be scoped around, because app/studio/page.tsx
+    # imports the same chain transitively.
+    #
+    # Both files now exist and are tracked on main (added in 1c26f94, "restore
+    # studio"). Re-verified on this branch, not assumed: `tsc --noEmit` reports
+    # no diagnostics, and `next build` compiles all 8 routes -- including
+    # /studio, the route that could not compile at all before -- with its
+    # "Linting and checking validity of types" phase passing, which also covers
+    # ESLint (`eslint` and `eslint-config-next` are real devDependencies now and
+    # .eslintrc.json is present, so the old "no ESLint anywhere" note is stale
+    # too; `next build` runs it, which is why there is no separate lint step).
+    #
+    # Leaving the gate off after the blocker was fixed means nothing stops the
+    # exact same class of bug -- an import of a file that does not exist -- from
+    # reaching main again and silently breaking the deployed frontend, which is
+    # served from a real `next build` on Render.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+      - name: Typecheck
+        run: npx tsc --noEmit
+      - name: Production build
+        # Same value as the e2e job, and same reason: nothing here talks to a
+        # real backend, and this only needs to be a syntactically valid URL for
+        # the build to inline.
+        env:
+          NEXT_PUBLIC_API_URL: http://127.0.0.1:3000
+        run: npm run build
