@@ -88,5 +88,12 @@ services:
       # Next.js inlines NEXT_PUBLIC_* at build time, so this must be present
       # when the image is built, not merely at runtime. Every caller in
       # frontend/features/** falls back to http://localhost:8000 without it.
+      #
+      # This is no longer only a comment: frontend/Dockerfile.production runs
+      # frontend/scripts/check-public-api-origin.mjs before `npm run build` and
+      # fails the image build if this value is missing, loopback, private, or
+      # not a bare https origin. It also derives NEXT_PUBLIC_API_BASE_URL --
+      # the name twelve frontend modules actually read -- from this one, so
+      # only this single value needs to exist here or in the dashboard.
       - key: NEXT_PUBLIC_API_URL
         value: https://vantacut-backend.onrender.com
