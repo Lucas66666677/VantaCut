@@ -10,6 +10,22 @@
 - Docker production images、Nginx TLS proxy、安全標頭與 Render CI quality gate。
 - Matrix export、SSE/WebSocket 任務狀態與媒體品質驗證。
 
+## CI release preflight
+
+`python scripts/release_preflight.py`（GitHub Actions workflow `Release preflight`）在每個 pull
+request 上驗證發佈接線，只讀 repository，不需要任何 secret：
+
+- `docker-compose*.yml` 沒有預設值的變數（含 `${VAR:?message}`）是否記載於對應的 env example。
+- `.env.production.example` 是否設定所有會退回開發預設值的設定，`ENVIRONMENT=production`、
+  `MOCK_AI=false` 是否成立，是否殘留 `minioadmin`／`localhost` 等開發值或看起來像真實憑證的值。
+- production healthcheck 的探測二進位檔是否安裝在該 image、埠是否 `EXPOSE`、路徑是否為
+  `backend/app/main.py` 宣告的 route；`/health` 與 `/ready` 是否都仍然存在。
+- 所有 `condition: service_healthy` 的目標是否真的有 healthcheck；Nginx upstream 是否指向存在
+  且有開埠的服務。
+- `docker compose config` 是否通過（無 Docker 時標示 skipped，不會當成通過）。
+
+它不驗證 secret 的實際內容、DNS、TLS 憑證與 managed service 可達性；那些仍屬下列部署主機步驟。
+
 ## 上線前必填設定
 
 1. 以 `.env.production.example` 建立僅限部署平台讀取的 Secret；不可將任何 API key 放進 Git 或 `NEXT_PUBLIC_*`。

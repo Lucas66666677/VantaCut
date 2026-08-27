@@ -3,7 +3,9 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile.spatial
-    gpus: all
+    # GPU access is inherited from the base file. Compose has no merge rule for `gpus`,
+    # so declaring it here as well aborts the whole overlay with "cannot override
+    # services.spatial-worker.gpus" - even though both files ask for `all`.
     environment:
       DATABASE_URL: postgresql+psycopg://video_editor:video_editor_dev@postgres:5432/video_editor
       REDIS_URL: redis://redis:6379/0
