@@ -38,7 +38,12 @@ RELEASE_FILES = (
     "frontend/Dockerfile.production",
     ".github/workflows/render-quality.yml",
     "render.yaml",
+    "backend/alembic.ini",
+    "backend/start.sh",
 )
+
+# The migration chain is read off disk, so the fixture needs the real revision files.
+RELEASE_TREES = ("backend/migrations",)
 
 
 def _load_preflight() -> ModuleType:
@@ -62,6 +67,12 @@ def release(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
         destination = root / relative
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(ROOT / relative, destination)
+    for relative in RELEASE_TREES:
+        shutil.copytree(
+            ROOT / relative,
+            root / relative,
+            ignore=shutil.ignore_patterns("__pycache__"),
+        )
     # Compose syntax needs the real binary; it has dedicated tests further down.
     monkeypatch.setattr(preflight.shutil, "which", lambda _name: None)
     yield root
@@ -349,3 +360,76 @@ def test_main_exits_zero_on_a_consistent_release(
 ) -> None:
     assert preflight.main(["--root", str(release)]) == 0
     assert "Release preflight passed" in capsys.readouterr().out
+
+
+# --- database migrations -------------------------------------------------------------
+# `alembic upgrade head` runs on every Render boot (backend/start.sh) and by hand at step
+# 4 of docs/launch-readiness.md. These cases are the ways that command stops meaning
+# "the production schema is now the one the code expects".
+
+HEAD_MIGRATION = "backend/migrations/versions/0040_fix_review_social_timestamp_defaults.py"
+
+
+def write_migration(root: Path, name: str, revision: str, down: str) -> None:
+    (root / "backend/migrations/versions" / name).write_text(
+        f'revision = "{revision}"\ndown_revision = {down}\n'
+        "def upgrade() -> None: ...\ndef downgrade() -> None: ...\n",
+        encoding="utf-8",
+    )
+
+
+def test_a_second_head_is_rejected(release: Path) -> None:
+    """Two heads make `alembic upgrade head` abort, so the container never starts."""
+    patch(release, HEAD_MIGRATION,
+          'down_revision = "0039_fix_ai_assistance_timestamp_defaults"',
+          'down_revision = "0038_fix_voice_profiles_timestamp_defaults"')
+    assert any("exactly one head, found 2" in failure for failure in failures(release))
+
+
+def test_down_revision_naming_a_deleted_migration_is_rejected(release: Path) -> None:
+    patch(release, HEAD_MIGRATION,
+          'down_revision = "0039_fix_ai_assistance_timestamp_defaults"',
+          'down_revision = "0039_renamed_while_rebasing"')
+    assert any(
+        "does not exist" in failure and "0039_renamed_while_rebasing" in failure
+        for failure in failures(release)
+    )
+
+
+def test_duplicate_revision_id_is_rejected(release: Path) -> None:
+    """Two files claiming one id make the chain ambiguous rather than merely long."""
+    write_migration(release, "0041_copy_paste.py",
+                    "0040_fix_review_social_timestamp_defaults",
+                    '"0039_fix_ai_assistance_timestamp_defaults"')
+    assert any("duplicate revision id" in failure for failure in failures(release))
+
+
+def test_migrations_head_cannot_reach_are_rejected(release: Path) -> None:
+    """A detached pair is never applied, so production runs a schema the code outgrew."""
+    write_migration(release, "0041_detached_a.py", "0041_detached_a", '"0041_detached_b"')
+    write_migration(release, "0041_detached_b.py", "0041_detached_b", '"0041_detached_a"')
+    assert any("cannot be reached from head" in failure for failure in failures(release))
+
+
+def test_versions_directory_without_migrations_is_rejected(release: Path) -> None:
+    """The quiet failure: `alembic upgrade head` exits 0 having applied nothing."""
+    for migration in (release / "backend/migrations/versions").glob("*.py"):
+        migration.unlink()
+    assert any("applied nothing" in failure for failure in failures(release))
+
+
+def test_script_location_pointing_away_from_the_migrations_is_rejected(release: Path) -> None:
+    patch(release, "backend/alembic.ini", "script_location = migrations",
+          "script_location = migrations_v2")
+    assert any("no env.py" in failure for failure in failures(release))
+
+
+def test_entrypoint_that_never_applies_migrations_is_rejected(release: Path) -> None:
+    patch(release, "backend/start.sh", "alembic upgrade head", "# alembic upgrade head")
+    assert any("never runs `alembic upgrade head`" in failure for failure in failures(release))
+
+
+def test_entrypoint_that_continues_after_a_failed_migration_is_rejected(release: Path) -> None:
+    """Without `set -e`, gunicorn starts anyway and serves the un-migrated schema."""
+    patch(release, "backend/start.sh", "set -e\n", "")
+    assert any("would not stop the API from starting" in failure for failure in failures(release))
