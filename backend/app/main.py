@@ -44,3 +44,23 @@ def readiness() -> dict[str, str]:
         if redis_client is not None:
             redis_client.close()
     return {"status": "ready"}
+
+
+@app.get("/ready/storage")
+def storage_readiness_endpoint() -> dict[str, bool]:
+    """Object storage is a hard requirement for uploads but not for /ready.
+
+    /ready is what a load balancer polls, so widening it to cover S3 would turn
+    a storage outage into a whole-service outage. But every media path in this
+    API -- upload URLs, multipart, previews, exports -- goes through
+    app.services.storage, and S3_ENDPOINT_URL/S3_ACCESS_KEY/S3_SECRET_KEY all
+    have local MinIO development defaults. A deployment that never set them
+    answers /health and /ready with 200 while failing every upload, which is
+    exactly the state this endpoint makes visible.
+
+    Booleans only, deliberately: no endpoint URL, bucket name or credential is
+    echoed back, so this stays safe to expose without authentication.
+    """
+    from app.services.storage_readiness import storage_readiness
+
+    return storage_readiness()
