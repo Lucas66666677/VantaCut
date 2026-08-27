@@ -37,6 +37,7 @@ RELEASE_FILES = (
     "frontend/Dockerfile",
     "frontend/Dockerfile.production",
     ".github/workflows/render-quality.yml",
+    "render.yaml",
 )
 
 
@@ -193,6 +194,34 @@ def test_workflow_waiting_on_an_undeclared_route_is_rejected(release: Path) -> N
     patch(release, ".github/workflows/render-quality.yml", "http://127.0.0.1:8000/health",
           "http://127.0.0.1:8000/healthy")
     assert any("would time out on every run" in failure for failure in failures(release))
+
+
+def test_render_health_gate_pointed_at_readiness_is_rejected(release: Path) -> None:
+    """/ready 503s when PostgreSQL or Redis blips; Render would restart a healthy API."""
+    patch(release, "render.yaml", "healthCheckPath: /health", "healthCheckPath: /ready")
+    assert any(
+        "/ready" in failure and "liveness route /health" in failure
+        for failure in failures(release)
+    )
+
+
+def test_render_health_gate_pointed_at_a_readiness_subpath_is_rejected(release: Path) -> None:
+    patch(release, "render.yaml", "healthCheckPath: /health", "healthCheckPath: /ready/storage")
+    assert any("readiness route" in failure for failure in failures(release))
+
+
+def test_render_health_gate_on_an_undeclared_route_is_rejected(release: Path) -> None:
+    """Renaming the liveness route without updating the blueprint fails every deploy."""
+    patch(release, "backend/app/main.py", '@app.get("/health")', '@app.get("/healthz")')
+    assert any(
+        "render.yaml" in failure and "does not declare as a route" in failure
+        for failure in failures(release)
+    )
+
+
+def test_render_backend_service_without_a_health_gate_is_rejected(release: Path) -> None:
+    patch(release, "render.yaml", "healthCheckPath: /health", "# healthCheckPath: removed")
+    assert any("declares no healthCheckPath" in failure for failure in failures(release))
 
 
 def test_router_paths_in_the_workflow_are_not_route_checked(release: Path) -> None:

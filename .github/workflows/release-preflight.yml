@@ -15,6 +15,7 @@ on:
       - "infra/nginx/**"
       - "backend/Dockerfile*"
       - "backend/app/main.py"
+      - "render.yaml"
       - "frontend/Dockerfile*"
       - "scripts/release_preflight.py"
       - "tests/preflight/**"
