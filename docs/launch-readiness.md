@@ -26,6 +26,11 @@ request 上驗證發佈接線，只讀 repository，不需要任何 secret：
   `backend/app/main.py` 宣告的 route；`/health` 與 `/ready` 是否都仍然存在。
 - 所有 `condition: service_healthy` 的目標是否真的有 healthcheck；Nginx upstream 是否指向存在
   且有開埠的服務。
+- `backend/migrations/` 的 revision 圖是否只有一個 head、沒有重複 revision id、沒有指向不存在的
+  `down_revision`，且每個 migration 都能從 head 回溯到；`backend/alembic.ini` 的 `script_location`
+  是否真的指向這些檔案（指錯時 `alembic upgrade head` 會「成功」但什麼都沒套用）。
+- `backend/start.sh` 是否真的執行 `alembic upgrade head`，且在其之前就 `set -e`（否則 migration
+  失敗仍會啟動 API，對外服務未升級的 schema）。
 - `docker compose config` 是否通過（無 Docker 時標示 skipped，不會當成通過）。
 
 它不驗證 secret 的實際內容、DNS、TLS 憑證與 managed service 可達性；那些仍屬下列部署主機步驟。

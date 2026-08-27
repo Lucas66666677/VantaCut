@@ -15,6 +15,10 @@ on:
       - "infra/nginx/**"
       - "backend/Dockerfile*"
       - "backend/app/main.py"
+      # The migration-chain check reads these off disk, so a migration PR must re-run it.
+      - "backend/alembic.ini"
+      - "backend/migrations/**"
+      - "backend/start.sh"
       - "render.yaml"
       - "frontend/Dockerfile*"
       - "scripts/release_preflight.py"

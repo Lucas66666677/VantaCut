@@ -43,6 +43,8 @@ NGINX_CONF = "infra/nginx/default.conf"
 API_MODULE = "backend/app/main.py"
 RENDER_WORKFLOW = ".github/workflows/render-quality.yml"
 RENDER_BLUEPRINT = "render.yaml"
+ALEMBIC_INI = "backend/alembic.ini"
+BACKEND_ENTRYPOINT = "backend/start.sh"
 
 # Compose files paired with the example that documents the values they interpolate.
 COMPOSE_SOURCES = (
@@ -130,6 +132,21 @@ SYNTHETIC_CONFIG_VALUE = "release-preflight-syntax-check-only"
 
 # Commands a healthcheck may use without the image installing anything.
 SHELL_BUILTIN_PROBES = {"sh", "/bin/sh", "bash", "/bin/bash", "test", "true"}
+
+# `alembic upgrade head` is the first thing backend/start.sh runs on every Render boot,
+# and step 4 of docs/launch-readiness.md is the same command by hand. Both read the
+# revision graph off disk, so a graph that cannot resolve is a repository fact this gate
+# can prove without a database, a DATABASE_URL, or any other secret.
+#
+# These are matched against one line at a time, so no pattern has to reason about
+# where a line ends.
+SCRIPT_LOCATION = re.compile(r"script_location\s*=\s*(.+?)\s*$")
+# `revision: str = "x"` is the modern template; `revision = "x"` is the older one.
+REVISION_ID = re.compile(r"revision\s*(?::[^=]+)?=\s*[\"']([^\"']+)[\"']")
+DOWN_REVISION = re.compile(r"down_revision\s*(?::[^=]+)?=\s*(.+?)\s*$")
+QUOTED = re.compile(r"[\"']([^\"']+)[\"']")
+UPGRADE_TO_HEAD = re.compile(r"alembic\s+upgrade\s+head\s*$")
+ABORT_ON_ERROR = re.compile(r"set\s+-[a-z]*e[a-z]*\s*$")
 
 
 class Report:
@@ -518,6 +535,178 @@ def check_render_health_gate(root: Path, report: Report) -> None:
         report.ok(f"{checked} Render health gate(s) probe the declared liveness route")
 
 
+def _script_location(root: Path) -> str:
+    """The versions tree alembic will read, as backend/alembic.ini declares it."""
+    for line in _read(root, ALEMBIC_INI).splitlines():
+        match = SCRIPT_LOCATION.match(line.strip())
+        if match:
+            return match.group(1)
+    return ""
+
+
+def _parents(value: str) -> list[str]:
+    """down_revision as alembic reads it: None, one id, or several at a merge point."""
+    if value.split("#")[0].strip() == "None":
+        return []
+    return QUOTED.findall(value)
+
+
+def _revision_graph(versions: Path) -> tuple[dict[str, list[Path]], dict[str, list[str]], list[Path]]:
+    """revision id -> files declaring it, revision id -> parents, and files declaring none."""
+    revisions: dict[str, list[Path]] = {}
+    parents: dict[str, list[str]] = {}
+    unparsed: list[Path] = []
+    for migration in sorted(versions.glob("*.py")):
+        identifier = None
+        down: list[str] | None = None
+        for line in migration.read_text(encoding="utf-8").splitlines():
+            if identifier is None:
+                match = REVISION_ID.match(line)
+                if match:
+                    identifier = match.group(1)
+                    continue
+            if down is None:
+                match = DOWN_REVISION.match(line)
+                if match:
+                    down = _parents(match.group(1))
+        if identifier is None or down is None:
+            unparsed.append(migration)
+            continue
+        revisions.setdefault(identifier, []).append(migration)
+        parents[identifier] = down
+    return revisions, parents, unparsed
+
+
+def check_migration_chain(root: Path, report: Report) -> None:
+    """`alembic upgrade head` must resolve to exactly one path over every migration.
+
+    Alembic resolves `head` from the revision files alone, so every way that resolution
+    breaks is a repository fact -- provable here with no database, no DATABASE_URL and no
+    other secret. Two heads or a down_revision naming a revision that no longer exists
+    abort the command, which under start.sh's `set -e` means the container never starts.
+    The quieter failures matter more: a script_location with no versions directory makes
+    `alembic upgrade head` *succeed having applied nothing*, and a revision that head
+    cannot reach is simply never run. Both let a release report migrations ready while the
+    production schema is not the one the code expects.
+    """
+    location = _script_location(root)
+    if not location:
+        report.fail(f"{ALEMBIC_INI} declares no script_location, so alembic finds no migrations.")
+        return
+    scripts = (root / ALEMBIC_INI).parent / location
+    versions = scripts / "versions"
+    if not (scripts / "env.py").is_file():
+        report.fail(
+            f"{ALEMBIC_INI}: script_location '{location}' has no env.py, so "
+            f"`alembic upgrade head` cannot run at all."
+        )
+        return
+    if not versions.is_dir():
+        report.fail(
+            f"{ALEMBIC_INI}: script_location '{location}' has no versions/ directory; "
+            f"`alembic upgrade head` would exit 0 having applied nothing."
+        )
+        return
+
+    revisions, parents, unparsed = _revision_graph(versions)
+    if unparsed:
+        names = ", ".join(sorted(path.name for path in unparsed))
+        report.fail(
+            f"{location}/versions: {names} declare no revision/down_revision pair, so "
+            f"alembic cannot place them in the chain."
+        )
+        return
+    if not revisions:
+        report.fail(
+            f"{location}/versions holds no migration, so `alembic upgrade head` would "
+            f"exit 0 having applied nothing and the API would start on an empty schema."
+        )
+        return
+
+    duplicated = {
+        identifier: files for identifier, files in revisions.items() if len(files) > 1
+    }
+    if duplicated:
+        detail = "; ".join(
+            f"{identifier} in {', '.join(sorted(path.name for path in files))}"
+            for identifier, files in sorted(duplicated.items())
+        )
+        report.fail(f"{location}/versions: duplicate revision id(s): {detail}.")
+        return
+
+    dangling = sorted(
+        f"{revisions[child][0].name} -> {parent}"
+        for child, ancestors in parents.items()
+        for parent in ancestors
+        if parent not in revisions
+    )
+    if dangling:
+        report.fail(
+            f"{location}/versions: down_revision points at a revision that does not "
+            f"exist: {'; '.join(dangling)}."
+        )
+        return
+
+    referenced = {parent for ancestors in parents.values() for parent in ancestors}
+    heads = sorted(identifier for identifier in revisions if identifier not in referenced)
+    if len(heads) != 1:
+        report.fail(
+            f"{location}/versions: `alembic upgrade head` needs exactly one head, found "
+            f"{len(heads)}: {', '.join(heads) or '(none -- the chain is a cycle)'}."
+        )
+        return
+
+    reachable: set[str] = set()
+    pending = [heads[0]]
+    while pending:
+        identifier = pending.pop()
+        if identifier in reachable:
+            continue
+        reachable.add(identifier)
+        pending.extend(parents[identifier])
+    stranded = sorted(set(revisions) - reachable)
+    if stranded:
+        report.fail(
+            f"{location}/versions: {', '.join(stranded)} cannot be reached from head "
+            f"{heads[0]}, so `alembic upgrade head` would never apply them."
+        )
+        return
+
+    report.ok(f"{len(revisions)} migrations form one chain to head {heads[0]}")
+
+
+def check_migration_entrypoint(root: Path, report: Report) -> None:
+    """The release must actually apply migrations, and abort if applying them fails.
+
+    A valid chain proves nothing if the container never runs it, or runs it and keeps
+    going after it failed: gunicorn would then serve the old schema while the deploy
+    reports success. start.sh is the Render dockerCommand (see render.yaml), so this is
+    the one place that decides whether a release applies migrations at all.
+    """
+    lines = _read(root, BACKEND_ENTRYPOINT).splitlines()
+    upgrade_at = next(
+        (index for index, line in enumerate(lines) if UPGRADE_TO_HEAD.match(line.strip())),
+        None,
+    )
+    if upgrade_at is None:
+        report.fail(
+            f"{BACKEND_ENTRYPOINT} never runs `alembic upgrade head`, so a release would "
+            f"start the API against whatever schema the database already had."
+        )
+        return
+    abort_at = next(
+        (index for index, line in enumerate(lines) if ABORT_ON_ERROR.match(line.strip())),
+        None,
+    )
+    if abort_at is None or abort_at > upgrade_at:
+        report.fail(
+            f"{BACKEND_ENTRYPOINT} runs `alembic upgrade head` without an earlier "
+            f"`set -e`, so a failed migration would not stop the API from starting."
+        )
+        return
+    report.ok(f"{BACKEND_ENTRYPOINT} applies migrations and aborts the boot if they fail")
+
+
 def _syntax_environment(root: Path, compose_files: list[str], example: str) -> dict[str, str]:
     """Values that let `config` parse a file without any real credential.
 
@@ -610,6 +799,8 @@ def run_preflight(root: Path) -> Report:
     check_reverse_proxy_contract(root, report)
     check_workflow_probe_paths(root, report)
     check_render_health_gate(root, report)
+    check_migration_chain(root, report)
+    check_migration_entrypoint(root, report)
     check_compose_syntax(root, report)
     return report
 
