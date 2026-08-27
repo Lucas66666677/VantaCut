@@ -22,6 +22,12 @@ on:
       - "backend/app/services/audio_enhancement.py"
       - "backend/app/tasks/audio_enhancement_tasks.py"
       - "backend/app/services/storage.py"
+      # Storage readiness diagnostic: /ready and /health both return 200 on a
+      # deployment that never configured S3, so this endpoint is the only thing
+      # that distinguishes "healthy" from "every upload will fail".
+      - "backend/app/main.py"
+      - "backend/app/services/storage_readiness.py"
+      - "backend/tests/test_storage_readiness.py"
       - "backend/app/worker.py"
       - "backend/app/models/entities.py"
       - "backend/migrations/**"
@@ -462,3 +468,6 @@ jobs:
       - name: Run M13 live-session ownership security tests
         working-directory: backend
         run: python -m pytest tests/test_m13_live_session_identity.py -v
+      - name: Run object-storage readiness tests
+        working-directory: backend
+        run: python -m pytest tests/test_storage_readiness.py -v

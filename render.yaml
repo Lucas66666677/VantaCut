@@ -1,0 +1,92 @@
+# Render blueprint for VantaCut.
+#
+# This documents the two services that already exist as hand-created Render
+# services (`vantacut-backend` and `vantacut-frontend`); it is not applied
+# automatically. Render reads a blueprint only when an owner syncs it from the
+# dashboard, so committing this changes nothing about what is running. Its job
+# is to make the deployment reproducible and to state, in the repo, which
+# values are secrets and which are not.
+#
+# Free tier grants one service per app, so the API and the Celery render worker
+# share a single container -- see backend/start.sh, which starts gunicorn first
+# and only launches the worker once /health answers, because both cold-import
+# the same very large ML stack and 0.1 CPU cannot do that twice at once.
+#
+# PostgreSQL and Redis are NOT declared here on purpose: the live services use
+# externally managed instances (both free-tier allowances on this account are
+# spent), and declaring them would ask Render to provision new ones. Supply
+# DATABASE_URL and REDIS_URL as secrets instead.
+services:
+  - type: web
+    name: vantacut-backend
+    runtime: docker
+    repo: https://github.com/Lucas66666677/VantaCut
+    branch: main
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    dockerCommand: sh start.sh
+    plan: free
+    region: singapore
+    healthCheckPath: /health
+    autoDeployTrigger: commit
+    envVars:
+      # --- non-secret configuration -------------------------------------
+      # ENVIRONMENT is the single most consequential value here. While it is
+      # unset it defaults to "development", and app/core/config.py then
+      # (a) makes Settings.use_mock_ai true, so every AI feature returns
+      # canned output rather than a real result, and (b) skips the
+      # module-level guard that requires JWT_SECRET_KEY -- which itself
+      # defaults to the empty string. Setting it fails closed: the API will
+      # refuse to import until JWT_SECRET_KEY is a real value.
+      - key: ENVIRONMENT
+        value: production
+      - key: CORS_ALLOWED_ORIGINS
+        value: https://vantacut-frontend.onrender.com
+      - key: SOCIAL_OAUTH_REDIRECT_BASE_URL
+        value: https://vantacut-backend.onrender.com
+
+      # --- secrets: set these in the dashboard, never in this file -------
+      - key: DATABASE_URL
+        sync: false
+      - key: REDIS_URL
+        sync: false
+      - key: JWT_SECRET_KEY
+        sync: false
+      # Object storage. Without these four the API still answers /health and
+      # /ready with 200 while every upload fails against the local-MinIO
+      # defaults; GET /ready/storage is what makes that state visible.
+      - key: S3_ENDPOINT_URL
+        sync: false
+      - key: S3_PUBLIC_ENDPOINT_URL
+        sync: false
+      - key: S3_ACCESS_KEY
+        sync: false
+      - key: S3_SECRET_KEY
+        sync: false
+      # Provider-dependent (the code defaults are "us-east-1" and "media"),
+      # so left for the dashboard rather than asserted here.
+      - key: S3_REGION
+        sync: false
+      - key: S3_BUCKET
+        sync: false
+      - key: SOCIAL_TOKEN_ENCRYPTION_KEY
+        sync: false
+      - key: MOBILE_HANDOFF_TOKEN_SECRET
+        sync: false
+
+  - type: web
+    name: vantacut-frontend
+    runtime: docker
+    repo: https://github.com/Lucas66666677/VantaCut
+    branch: main
+    dockerfilePath: ./frontend/Dockerfile.production
+    dockerContext: ./frontend
+    plan: free
+    region: singapore
+    autoDeployTrigger: commit
+    envVars:
+      # Next.js inlines NEXT_PUBLIC_* at build time, so this must be present
+      # when the image is built, not merely at runtime. Every caller in
+      # frontend/features/** falls back to http://localhost:8000 without it.
+      - key: NEXT_PUBLIC_API_URL
+        value: https://vantacut-backend.onrender.com

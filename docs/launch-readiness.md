@@ -2,6 +2,10 @@
 
 這份清單將「程式能跑」與「可以對外開放」分開。只有全部完成，才能將流量導向正式環境。
 
+> [!NOTE]
+> 這份清單描述的是自架 Docker Compose + Nginx 拓樸。實際部署在 Render 免費方案上，
+> 部署現況、已驗證項目與剩餘阻礙請看 [`docs/render-deployment.md`](./render-deployment.md)。
+
 ## 已在程式內完成
 
 - Landing、Studio、互動範例、PWA manifest 與 404 體驗。
@@ -36,7 +40,7 @@ request 上驗證發佈接線，只讀 repository，不需要任何 secret：
 
 ## 必須由營運／法務完成的外部條件
 
-- 加入真正的登入／帳號驗證與 session cookie 策略；目前資料模型有 User，但尚未提供對外的帳密或 SSO 身分流程。
+- ~~加入真正的登入／帳號驗證與 session cookie 策略~~：已完成。`/api/v1/auth/register`、`/login`、`/me` 已上線，`/studio` 由 `AuthGate` 擋住並顯示真實登入頁；176 個 API 路徑中有 170 個操作標註了 `security`。SSO 仍未實作。
 - 配置 Stripe、YouTube、TikTok、OpenAI/Gemini/Suno 等正式 OAuth／API callback 網域與隱私權政策。
 - 建立資料處理條款、AI 生成內容揭露、聲音／臉部處理同意書與刪除資料流程。
 - 設定 S3 lifecycle、備份演練、Sentry/OTel 告警、WAF、速率限制與異常成本警報。
