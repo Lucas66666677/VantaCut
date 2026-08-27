@@ -8,9 +8,9 @@ state no service can reach, an nginx upstream pointing at a port nothing opens, 
 production example still carrying `minioadmin` would all reach a release untouched.
 
 This script closes that gap from the repository alone. It reads the compose files, the
-env examples, the Dockerfiles, the nginx config, the render workflow and the FastAPI
-application, and it never reads a real `.env`: a preflight that needs a secret cannot
-run before the secret exists.
+env examples, the Dockerfiles, the nginx config, the render workflow, the Render
+blueprint and the FastAPI application, and it never reads a real `.env`: a preflight
+that needs a secret cannot run before the secret exists.
 
     python scripts/release_preflight.py
 
@@ -42,6 +42,7 @@ PRODUCTION_ENV_EXAMPLE = ".env.production.example"
 NGINX_CONF = "infra/nginx/default.conf"
 API_MODULE = "backend/app/main.py"
 RENDER_WORKFLOW = ".github/workflows/render-quality.yml"
+RENDER_BLUEPRINT = "render.yaml"
 
 # Compose files paired with the example that documents the values they interpolate.
 COMPOSE_SOURCES = (
@@ -63,6 +64,18 @@ LOOPBACK_URL = re.compile(r"http://127\.0\.0\.1:(\d+)(/[^\s'\"]*)")
 # Liveness and readiness are separate deployment contracts: the container healthcheck
 # restarts on liveness, a load balancer drains on readiness. Both must keep existing.
 REQUIRED_API_ROUTES = ("/health", "/ready")
+
+# The Render health gate restarts the container; it is not a load-balancer drain. So it
+# has to be the liveness route, and never a readiness one: /ready opens PostgreSQL and
+# Redis and answers 503 when either is unreachable, and both are externally managed
+# instances, so a dependency blip would restart an API container that is itself fine --
+# on the free tier, into a cold-start loop. `/ready/storage` is readiness too, hence the
+# prefix match rather than an equality test.
+LIVENESS_ROUTE = "/health"
+READINESS_ROUTES = ("/ready",)
+# Render services built from this path are the API; the frontend service has no route
+# contract with backend/app/main.py.
+BACKEND_BUILD_PREFIX = "backend/"
 
 # Settings the production stack must state outright. Each has a development default in
 # backend/app/core/config.py or backend/app/db/session.py that would otherwise apply
@@ -447,6 +460,64 @@ def check_workflow_probe_paths(root: Path, report: Report) -> None:
         report.ok(f"{checked} workflow wait URL(s) address a declared route")
 
 
+def _is_readiness_route(path: str) -> bool:
+    return any(path == route or path.startswith(f"{route}/") for route in READINESS_ROUTES)
+
+
+def check_render_health_gate(root: Path, report: Report) -> None:
+    """Render restarts the API on this path, so it must be liveness and it must exist."""
+    blueprint = yaml.safe_load(_read(root, RENDER_BLUEPRINT))
+    if not isinstance(blueprint, dict):
+        report.fail(f"{RENDER_BLUEPRINT} does not parse as a mapping.")
+        return
+    routes = declared_routes(root)
+    failed = False
+    checked = 0
+    for service in blueprint.get("services", []) or []:
+        if not isinstance(service, dict):
+            continue
+        dockerfile = str(service.get("dockerfilePath", "")).lstrip("./")
+        if not dockerfile.startswith(BACKEND_BUILD_PREFIX):
+            continue
+        name = service.get("name", "<unnamed>")
+        path = service.get("healthCheckPath")
+        if not path:
+            failed = True
+            report.fail(
+                f"{RENDER_BLUEPRINT}: the {name} service declares no healthCheckPath, so "
+                f"a deploy that never finishes starting would still be published."
+            )
+            continue
+        checked += 1
+        if _is_readiness_route(path):
+            failed = True
+            report.fail(
+                f"{RENDER_BLUEPRINT}: the {name} health gate points at {path}, a readiness "
+                f"route that depends on PostgreSQL and Redis; the gate must use the public "
+                f"liveness route {LIVENESS_ROUTE}, or a dependency outage restarts the API."
+            )
+        elif path != LIVENESS_ROUTE:
+            failed = True
+            report.fail(
+                f"{RENDER_BLUEPRINT}: the {name} health gate points at {path}, not the "
+                f"liveness route {LIVENESS_ROUTE}."
+            )
+        if path not in routes:
+            failed = True
+            report.fail(
+                f"{RENDER_BLUEPRINT}: the {name} health gate probes {path}, which "
+                f"{API_MODULE} does not declare as a route; every deploy would fail."
+            )
+    if not checked and not failed:
+        failed = True
+        report.fail(
+            f"{RENDER_BLUEPRINT}: no service builds from {BACKEND_BUILD_PREFIX}, so the "
+            f"API health gate is no longer covered by this check."
+        )
+    if not failed:
+        report.ok(f"{checked} Render health gate(s) probe the declared liveness route")
+
+
 def _syntax_environment(root: Path, compose_files: list[str], example: str) -> dict[str, str]:
     """Values that let `config` parse a file without any real credential.
 
@@ -538,6 +609,7 @@ def run_preflight(root: Path) -> Report:
     check_health_dependencies(root, report)
     check_reverse_proxy_contract(root, report)
     check_workflow_probe_paths(root, report)
+    check_render_health_gate(root, report)
     check_compose_syntax(root, report)
     return report
 
