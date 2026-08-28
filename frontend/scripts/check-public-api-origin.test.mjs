@@ -96,6 +96,8 @@ test("rejects private, link-local and CGNAT ranges", () => {
     ["https://100.100.0.1", /100\.64\.0\.0\/10/],
     ["https://[fd12:3456::1]", /fc00::\/7/],
     ["https://[fe80::1]", /fe80::\/10/],
+    ["https://[::ffff:127.0.0.1]", /loopback/],
+    ["https://[::ffff:192.168.1.20]", /192\.168\.0\.0\/16/],
   ];
   for (const [value, expected] of cases) {
     const result = classifyApiOrigin(value);
