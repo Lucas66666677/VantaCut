@@ -1,0 +1,50 @@
+name: Frontend served isolation headers
+
+# Probes a deployed origin and fails unless the response a browser actually
+# receives carries Cross-Origin-Opener-Policy, Cross-Origin-Embedder-Policy and
+# Cross-Origin-Resource-Policy. This is the check that sees past the build:
+# `frontend-auth-checks.yml`'s frontend-build job asserts the production build
+# *declares* those headers, which stays true even when the public host answers
+# without them (a free-plan instance still starting, a failed deploy, an origin
+# the edge cannot reach).
+#
+# Manual dispatch only, deliberately:
+#   - On a pull request the deployed origin still serves `main`, so a PR job
+#     would report on code the pull request does not contain.
+#   - On a schedule it would page on Render free-plan cold starts, which are not
+#     header regressions. The check itself refuses to paper over that state -- it
+#     fails rather than skipping -- so running it wants a human choosing when.
+# Run it after a deploy, or whenever the served contract needs proving.
+#
+# No secrets: it makes unauthenticated GET/HEAD requests to a public origin.
+
+on:
+  workflow_dispatch:
+    inputs:
+      origin:
+        description: "Bare https origin to probe (defaults to the frontend origin in render.yaml)"
+        required: false
+        default: "https://vantacut-frontend.onrender.com"
+
+permissions:
+  contents: read
+
+jobs:
+  served-isolation-headers:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # No `npm ci`: the script uses only node: builtins and global fetch, so it
+      # runs against a bare checkout in seconds. Its unit tests run in the
+      # existing frontend-build job's `npm run test:config`.
+      - name: Verify the public origin serves the cross-origin isolation contract
+        env:
+          FRONTEND_ORIGIN: ${{ inputs.origin }}
+        run: node scripts/check-served-isolation-headers.mjs

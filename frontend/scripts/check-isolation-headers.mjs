@@ -24,6 +24,12 @@
  * comparing `source` strings, so narrowing the rule to a subset of routes fails
  * here even though all three header names are still present.
  *
+ * What it cannot see: the manifest is what the origin answers from, not what a
+ * browser receives. Everything in front of the Next.js process -- and the
+ * question of whether the request reached that process at all -- is out of
+ * scope here, and a passing run is not evidence about the public host.
+ * `check-served-isolation-headers.mjs` covers that half by asking a real origin.
+ *
  *     node scripts/check-isolation-headers.mjs   # after `npm run build`
  */
 
