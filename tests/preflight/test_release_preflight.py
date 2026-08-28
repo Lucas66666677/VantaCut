@@ -23,6 +23,10 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 PREFLIGHT_PATH = ROOT / "scripts" / "release_preflight.py"
 
+# Anchors that span two YAML lines are built from this rather than an escape, so the
+# indentation they have to match stays visible in the source.
+NEWLINE = chr(10)
+
 RELEASE_FILES = (
     "docker-compose.yml",
     "docker-compose.production.yml",
@@ -84,6 +88,16 @@ def patch(root: Path, relative: str, old: str, new: str) -> None:
     if old not in text:
         raise AssertionError(f"{relative}: anchor not found: {old!r}")
     path.write_text(text.replace(old, new, 1), encoding="utf-8")
+
+
+def add_frontend_domain(root: Path, domain: str) -> None:
+    """Declare a custom domain on the Render frontend service, as an owner would."""
+    patch(
+        root,
+        "render.yaml",
+        f"    name: vantacut-frontend{NEWLINE}",
+        f"    name: vantacut-frontend{NEWLINE}    domains:{NEWLINE}      - {domain}{NEWLINE}",
+    )
 
 
 def failures(root: Path) -> list[str]:
@@ -233,6 +247,95 @@ def test_render_health_gate_on_an_undeclared_route_is_rejected(release: Path) ->
 def test_render_backend_service_without_a_health_gate_is_rejected(release: Path) -> None:
     patch(release, "render.yaml", "healthCheckPath: /health", "# healthCheckPath: removed")
     assert any("declares no healthCheckPath" in failure for failure in failures(release))
+
+
+def test_renaming_the_frontend_service_breaks_cors_and_is_rejected(release: Path) -> None:
+    """A rename moves the app to a new origin; the API keeps allowing only the old one."""
+    patch(release, "render.yaml", "name: vantacut-frontend", "name: vantacut-web")
+    assert any(
+        "CORS_ALLOWED_ORIGINS" in failure and "https://vantacut-web.onrender.com" in failure
+        for failure in failures(release)
+    )
+
+
+def test_renaming_the_backend_service_strands_the_inlined_api_origin(release: Path) -> None:
+    """The bundle would ship pointing at a host the blueprint no longer deploys."""
+    patch(release, "render.yaml", "name: vantacut-backend", "name: vantacut-api")
+    assert any(
+        "NEXT_PUBLIC_API_URL" in failure and "does not deploy" in failure
+        for failure in failures(release)
+    )
+
+
+def test_a_public_https_origin_for_an_undeployed_host_is_rejected(release: Path) -> None:
+    """check-public-api-origin.mjs passes this: it is a bare, public, https origin.
+
+    That guard rejects loopback, private and malformed origins. It cannot know which
+    host actually runs the API, so only the blueprint can catch a stale but well-formed
+    one -- which is exactly what a service rename leaves behind.
+    """
+    patch(
+        release,
+        "render.yaml",
+        f"value: https://vantacut-backend.onrender.com{NEWLINE}",
+        f"value: https://vantacut-backend-old.onrender.com{NEWLINE}",
+    )
+    assert any("vantacut-backend-old.onrender.com" in failure for failure in failures(release))
+
+
+def test_a_custom_domain_missing_from_cors_is_rejected(release: Path) -> None:
+    """Render keeps serving the app on every declared domain, so all of them need CORS."""
+    add_frontend_domain(release, "app.vantacut.com")
+    assert any(
+        "https://app.vantacut.com" in failure and "matches origins exactly" in failure
+        for failure in failures(release)
+    )
+
+
+def test_a_custom_domain_listed_in_cors_passes(release: Path) -> None:
+    add_frontend_domain(release, "app.vantacut.com")
+    patch(
+        release,
+        "render.yaml",
+        "value: https://vantacut-frontend.onrender.com",
+        "value: https://vantacut-frontend.onrender.com,https://app.vantacut.com",
+    )
+    assert failures(release) == []
+
+
+def test_a_dashboard_managed_origin_is_a_skip_not_a_pass(release: Path) -> None:
+    """`sync: false` hides the value, so the blueprint cannot prove the pairing."""
+    patch(
+        release,
+        "render.yaml",
+        f"- key: CORS_ALLOWED_ORIGINS{NEWLINE}        value: https://vantacut-frontend.onrender.com",
+        f"- key: CORS_ALLOWED_ORIGINS{NEWLINE}        sync: false",
+    )
+    report = preflight.run_preflight(release)
+    assert report.failures == []
+    assert any("CORS_ALLOWED_ORIGINS is dashboard-managed" in skip for skip in report.skips)
+
+
+def test_dropping_cors_from_the_blueprint_is_rejected(release: Path) -> None:
+    """Unset, main.py falls back to http://localhost:3000 and the deployed app is blocked."""
+    patch(release, "render.yaml", "- key: CORS_ALLOWED_ORIGINS", "- key: CORS_UNUSED")
+    assert any("sets no CORS_ALLOWED_ORIGINS" in failure for failure in failures(release))
+
+
+def test_an_oauth_redirect_base_pointing_at_the_frontend_is_rejected(release: Path) -> None:
+    """The callback route lives on the API, so the base URL has to be the API's origin."""
+    patch(
+        release,
+        "render.yaml",
+        f"- key: SOCIAL_OAUTH_REDIRECT_BASE_URL{NEWLINE}"
+        "        value: https://vantacut-backend.onrender.com",
+        f"- key: SOCIAL_OAUTH_REDIRECT_BASE_URL{NEWLINE}"
+        "        value: https://vantacut-frontend.onrender.com",
+    )
+    assert any(
+        "SOCIAL_OAUTH_REDIRECT_BASE_URL" in failure and "itself" in failure
+        for failure in failures(release)
+    )
 
 
 def test_router_paths_in_the_workflow_are_not_route_checked(release: Path) -> None:

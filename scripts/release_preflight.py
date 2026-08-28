@@ -78,6 +78,19 @@ READINESS_ROUTES = ("/ready",)
 # Render services built from this path are the API; the frontend service has no route
 # contract with backend/app/main.py.
 BACKEND_BUILD_PREFIX = "backend/"
+FRONTEND_BUILD_PREFIX = "frontend/"
+
+# Render publishes every web service at https://<name>.onrender.com, plus any custom
+# domain the blueprint declares under `domains`. Those are the only hosts a browser can
+# reach a service on, so they are the only origins the blueprint may name.
+RENDER_DEFAULT_HOST_SUFFIX = ".onrender.com"
+# The origin the browser calls, inlined into the bundle at image build time.
+FRONTEND_API_ORIGIN_KEY = "NEXT_PUBLIC_API_URL"
+# The origins the API answers those calls for.
+BACKEND_CORS_KEY = "CORS_ALLOWED_ORIGINS"
+# app/api/v1/social.py appends /api/v1/social/oauth/<platform>/callback to this, so it
+# names a route on the API itself and must therefore be the API's own origin.
+BACKEND_SELF_ORIGIN_KEYS = ("SOCIAL_OAUTH_REDIRECT_BASE_URL",)
 
 # Settings the production stack must state outright. Each has a development default in
 # backend/app/core/config.py or backend/app/db/session.py that would otherwise apply
@@ -481,20 +494,31 @@ def _is_readiness_route(path: str) -> bool:
     return any(path == route or path.startswith(f"{route}/") for route in READINESS_ROUTES)
 
 
-def check_render_health_gate(root: Path, report: Report) -> None:
-    """Render restarts the API on this path, so it must be liveness and it must exist."""
+def blueprint_services(root: Path, report: Report) -> list[dict[str, Any]] | None:
+    """Every service the Render blueprint declares, or None when it cannot be read."""
     blueprint = yaml.safe_load(_read(root, RENDER_BLUEPRINT))
     if not isinstance(blueprint, dict):
         report.fail(f"{RENDER_BLUEPRINT} does not parse as a mapping.")
+        return None
+    return [
+        service for service in blueprint.get("services", []) or [] if isinstance(service, dict)
+    ]
+
+
+def _builds_from(service: dict[str, Any], prefix: str) -> bool:
+    return str(service.get("dockerfilePath", "")).lstrip("./").startswith(prefix)
+
+
+def check_render_health_gate(root: Path, report: Report) -> None:
+    """Render restarts the API on this path, so it must be liveness and it must exist."""
+    services = blueprint_services(root, report)
+    if services is None:
         return
     routes = declared_routes(root)
     failed = False
     checked = 0
-    for service in blueprint.get("services", []) or []:
-        if not isinstance(service, dict):
-            continue
-        dockerfile = str(service.get("dockerfilePath", "")).lstrip("./")
-        if not dockerfile.startswith(BACKEND_BUILD_PREFIX):
+    for service in services:
+        if not _builds_from(service, BACKEND_BUILD_PREFIX):
             continue
         name = service.get("name", "<unnamed>")
         path = service.get("healthCheckPath")
@@ -533,6 +557,167 @@ def check_render_health_gate(root: Path, report: Report) -> None:
         )
     if not failed:
         report.ok(f"{checked} Render health gate(s) probe the declared liveness route")
+
+
+def _public_origins(service: dict[str, Any]) -> list[str]:
+    """Every origin a browser can reach this Render web service on."""
+    origins = [f"https://{service.get('name')}{RENDER_DEFAULT_HOST_SUFFIX}"]
+    for domain in service.get("domains", []) or []:
+        origins.append(f"https://{str(domain).strip().lower()}")
+    return origins
+
+
+def _blueprint_env(service: dict[str, Any]) -> dict[str, str | None]:
+    """key -> the literal value, or None where the blueprint defers to the dashboard."""
+    entries: dict[str, str | None] = {}
+    for entry in service.get("envVars", []) or []:
+        if not isinstance(entry, dict) or "key" not in entry:
+            continue
+        value = entry.get("value")
+        entries[str(entry["key"])] = None if value is None else str(value).strip()
+    return entries
+
+
+def _sole_service(
+    services: list[dict[str, Any]], prefix: str, report: Report
+) -> dict[str, Any] | None:
+    """The one web service built from `prefix`.
+
+    Only `type: web` services get a public hostname, so a background worker added from
+    the same build context later is not a second candidate and does not break this.
+    """
+    matches = [
+        service
+        for service in services
+        if service.get("type") == "web" and _builds_from(service, prefix)
+    ]
+    if len(matches) == 1:
+        return matches[0]
+    if not matches:
+        report.fail(
+            f"{RENDER_BLUEPRINT}: no web service builds from {prefix}, so the origins the "
+            f"other service points at are no longer checked against anything."
+        )
+        return None
+    names = ", ".join(str(service.get("name", "<unnamed>")) for service in matches)
+    report.fail(
+        f"{RENDER_BLUEPRINT}: {len(matches)} services build from {prefix} ({names}); "
+        f"this check cannot tell which one the paired origin should name."
+    )
+    return None
+
+
+def check_render_public_origins(root: Path, report: Report) -> None:
+    """The two Render services must name each other, or the browser fails, not the deploy.
+
+    `render.yaml` hard-codes three origins, and every one of them is derived from a
+    service name in the same file. Nothing keeps them in step: rename a service, or edit
+    one literal, and the blueprint still parses, both images still build, both
+    healthCheckPaths still answer 200, and the deploy is published green. The product is
+    broken anyway, in the browser, where no CI job is looking:
+
+    - `NEXT_PUBLIC_API_URL` is inlined into the client bundle at build time
+      (frontend/Dockerfile.production), so a bundle pointed at the wrong host cannot be
+      corrected by editing the environment -- it needs a rebuild.
+      check-public-api-origin.mjs already rejects a loopback or private origin, but a
+      well-formed https origin for a host this blueprint does not deploy passes it.
+    - `CORS_ALLOWED_ORIGINS` is matched exactly by CORSMiddleware, and the API is on a
+      different origin from the app, so a missing entry means the browser blocks every
+      call before it is sent. docs/render-deployment.md records this pairing being
+      verified once, by hand, with a curl preflight against the live service.
+
+    All three facts are in the repository, so this needs no secret and no network.
+    """
+    services = blueprint_services(root, report)
+    if services is None:
+        return
+    backend = _sole_service(services, BACKEND_BUILD_PREFIX, report)
+    frontend = _sole_service(services, FRONTEND_BUILD_PREFIX, report)
+    if backend is None or frontend is None:
+        return
+
+    backend_name = backend.get("name", "<unnamed>")
+    frontend_name = frontend.get("name", "<unnamed>")
+    backend_origins = _public_origins(backend)
+    frontend_origins = _public_origins(frontend)
+    backend_env = _blueprint_env(backend)
+    frontend_env = _blueprint_env(frontend)
+    failed = False
+    checked = 0
+
+    if FRONTEND_API_ORIGIN_KEY not in frontend_env:
+        failed = True
+        report.fail(
+            f"{RENDER_BLUEPRINT}: the {frontend_name} service sets no "
+            f"{FRONTEND_API_ORIGIN_KEY}, so the bundle it builds inlines the "
+            f"http://localhost:8000 fallback that every caller in frontend/features "
+            f"carries."
+        )
+    elif frontend_env[FRONTEND_API_ORIGIN_KEY] is None:
+        report.skip(
+            f"{RENDER_BLUEPRINT}: {FRONTEND_API_ORIGIN_KEY} is dashboard-managed, so the "
+            f"blueprint cannot show which origin gets inlined into the bundle"
+        )
+    else:
+        checked += 1
+        inlined = frontend_env[FRONTEND_API_ORIGIN_KEY]
+        if inlined not in backend_origins:
+            failed = True
+            report.fail(
+                f"{RENDER_BLUEPRINT}: {frontend_name} builds against "
+                f"{FRONTEND_API_ORIGIN_KEY}={inlined}, which is not an origin the "
+                f"{backend_name} service is published on ({', '.join(backend_origins)}); "
+                f"the bundle would ship pointing at a host this blueprint does not deploy."
+            )
+
+    if BACKEND_CORS_KEY not in backend_env:
+        failed = True
+        report.fail(
+            f"{RENDER_BLUEPRINT}: the {backend_name} service sets no {BACKEND_CORS_KEY}, "
+            f"so it falls back to the http://localhost:3000 default in {API_MODULE} and "
+            f"the browser blocks every call the deployed app makes."
+        )
+    elif backend_env[BACKEND_CORS_KEY] is None:
+        report.skip(
+            f"{RENDER_BLUEPRINT}: {BACKEND_CORS_KEY} is dashboard-managed, so the "
+            f"blueprint cannot show which origins the API answers for"
+        )
+    else:
+        allowed = {
+            entry.strip() for entry in backend_env[BACKEND_CORS_KEY].split(",") if entry.strip()
+        }
+        for origin in frontend_origins:
+            checked += 1
+            if origin not in allowed:
+                failed = True
+                report.fail(
+                    f"{RENDER_BLUEPRINT}: {backend_name} allows {BACKEND_CORS_KEY}="
+                    f"{', '.join(sorted(allowed)) or '(empty)'}, which omits {origin} -- an "
+                    f"origin the {frontend_name} service is served on. CORSMiddleware "
+                    f"matches origins exactly, so the browser would block every request "
+                    f"from that host."
+                )
+
+    for key in BACKEND_SELF_ORIGIN_KEYS:
+        # Absent or dashboard-managed, there is no literal to contradict anything; that
+        # is a configuration question for the Render dashboard rather than a mistake
+        # inside this file. Only a value the blueprint states outright is checked here.
+        value = backend_env.get(key)
+        if value is None:
+            continue
+        checked += 1
+        if value.rstrip("/") not in backend_origins:
+            failed = True
+            report.fail(
+                f"{RENDER_BLUEPRINT}: {backend_name} sets {key}={value}, but that route is "
+                f"served by {backend_name} itself, which is published on "
+                f"{', '.join(backend_origins)}."
+            )
+
+    if not failed:
+        report.ok(
+            f"{checked} Render origin(s) name a service the blueprint publishes on that host"
+        )
 
 
 def _script_location(root: Path) -> str:
@@ -799,6 +984,7 @@ def run_preflight(root: Path) -> Report:
     check_reverse_proxy_contract(root, report)
     check_workflow_probe_paths(root, report)
     check_render_health_gate(root, report)
+    check_render_public_origins(root, report)
     check_migration_chain(root, report)
     check_migration_entrypoint(root, report)
     check_compose_syntax(root, report)
