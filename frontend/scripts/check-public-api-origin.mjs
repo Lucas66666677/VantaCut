@@ -111,6 +111,15 @@ function rejectHostname(hostname) {
     if (inner === "::1" || inner === "::") return "is an IPv6 loopback/unspecified address";
     if (/^f[cd]/.test(inner)) return "is in the fc00::/7 unique-local range";
     if (/^fe[89ab]/.test(inner)) return "is in the fe80::/10 link-local range";
+    // URL canonicalizes ::ffff:127.0.0.1 to ::ffff:7f00:1 before this
+    // guard sees it. Unwrap mapped literals and apply the IPv4 policy so a
+    // loopback or LAN address cannot bypass the production build check.
+    const mapped = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/i.exec(inner);
+    if (mapped) {
+      const value = Number.parseInt(mapped[1], 16) * 65_536 + Number.parseInt(mapped[2], 16);
+      const octets = [value >>> 24, (value >>> 16) & 255, (value >>> 8) & 255, value & 255];
+      return rejectHostname(octets.join("."));
+    }
     return null;
   }
 
