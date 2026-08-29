@@ -40,8 +40,22 @@ def _probe_bucket() -> bool:
         return False
 
 
+def storage_is_configured() -> bool:
+    """Whether a real object-storage endpoint was configured for this deploy.
+
+    A pure comparison against the development fallback -- no network, no boto3,
+    no credential read -- so it is safe to call on the hot path of every
+    upload-issuing request. `storage_readiness()` layers a bucket probe on top
+    for the readiness endpoint; the upload endpoints want only this cheap half,
+    because handing a client a presigned URL that points at a MinIO nobody
+    started is a failure the API can refuse up front rather than one the
+    browser discovers against a dead `localhost:9000`.
+    """
+    return settings.s3_endpoint_url != DEVELOPMENT_S3_ENDPOINT
+
+
 def storage_readiness() -> dict[str, bool]:
-    configured = settings.s3_endpoint_url != DEVELOPMENT_S3_ENDPOINT
+    configured = storage_is_configured()
     reachable = _probe_bucket() if configured else False
     return {
         "configured": configured,

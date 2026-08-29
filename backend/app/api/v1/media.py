@@ -20,12 +20,34 @@ from app.schemas.media import (
     UploadURLResponse,
 )
 from app.services.storage import complete_multipart_upload, create_multipart_part_url, create_multipart_upload, create_upload_url, object_exists
+from app.services.storage_readiness import storage_is_configured
 from app.schemas.semantic_search import MediaSemanticGridItem, MediaSemanticGridRequest, MediaSemanticGridResponse, MediaSemanticSearchRequest, MediaSemanticSearchResponse, MediaSemanticSearchResult
 from app.tasks.media_tasks import process_new_media
 from app.schemas.derived_previews import DerivedPreviewResponse
 from app.services.storage import create_download_url
 
 router = APIRouter(prefix="/media", tags=["media"])
+
+
+def _require_storage_configured() -> None:
+    """Refuse to hand out an upload URL when storage is not configured.
+
+    Every presigned URL these endpoints mint is signed against
+    ``settings.s3_endpoint_url``. When that is still the development
+    ``localhost:9000`` fallback, the URL is valid-looking and useless: the
+    browser PUTs to a MinIO nobody started and the upload fails opaquely,
+    after a `MediaAsset` row has already been written in ``UPLOADING`` state.
+    Failing closed here, before that row is created, keeps the storage
+    contract honest at the API boundary -- the same state ``/ready/storage``
+    reports, refused rather than merely observed. It is a configuration check
+    only (no bucket probe), so it never turns a storage blip into a 503 on a
+    correctly-configured deploy.
+    """
+    if not storage_is_configured():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Object storage is not configured for this deployment",
+        )
 
 
 @router.get("/{media_asset_id}/derived-previews/{job_id}", response_model=DerivedPreviewResponse)
@@ -130,6 +152,7 @@ def semantic_media_grid(payload: MediaSemanticGridRequest, current_user: User = 
 def create_media_upload_url(
     payload: UploadURLRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)
 ) -> UploadURLResponse:
+    _require_storage_configured()
     asset = _create_uploading_asset(payload, current_user, db)
     return UploadURLResponse(
         asset_id=asset.id,
@@ -173,6 +196,7 @@ def asset_id_placeholder(filename: str) -> str:
 
 @router.post("/multipart-upload/initiate", response_model=MultipartUploadInitiateResponse, status_code=status.HTTP_201_CREATED)
 def initiate_multipart_media_upload(payload: UploadURLRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> MultipartUploadInitiateResponse:
+    _require_storage_configured()
     asset = _create_uploading_asset(payload, current_user, db)
     upload_id = create_multipart_upload(asset.storage_key, payload.content_type)
     return MultipartUploadInitiateResponse(asset_id=asset.id, storage_key=asset.storage_key, upload_id=upload_id, expires_in=settings.presigned_url_expire_seconds)
@@ -180,6 +204,7 @@ def initiate_multipart_media_upload(payload: UploadURLRequest, current_user: Use
 
 @router.post("/multipart-upload/part-url", response_model=MultipartPartURLResponse)
 def get_multipart_part_url(payload: MultipartPartURLRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> MultipartPartURLResponse:
+    _require_storage_configured()
     asset = db.get(MediaAsset, payload.asset_id)
     if asset is None:
         raise HTTPException(status_code=404, detail="Media asset not found")

@@ -44,6 +44,7 @@ RELEASE_FILES = (
     "render.yaml",
     "backend/alembic.ini",
     "backend/start.sh",
+    "backend/app/api/v1/media.py",
 )
 
 # The migration chain is read off disk, so the fixture needs the real revision files.
@@ -536,3 +537,46 @@ def test_entrypoint_that_continues_after_a_failed_migration_is_rejected(release:
     """Without `set -e`, gunicorn starts anyway and serves the un-migrated schema."""
     patch(release, "backend/start.sh", "set -e\n", "")
     assert any("would not stop the API from starting" in failure for failure in failures(release))
+
+MEDIA_MODULE = "backend/app/api/v1/media.py"
+
+
+def test_upload_endpoints_fail_closed_passes_on_the_committed_source(release: Path) -> None:
+    """The guarded upload routes are part of the release-wiring baseline."""
+    assert failures(release) == []
+
+
+def test_an_upload_route_that_drops_the_storage_guard_is_rejected(release: Path) -> None:
+    """Removing the guard from create_media_upload_url must fail the release."""
+    patch(
+        release,
+        MEDIA_MODULE,
+        "    _require_storage_configured()\n    asset = _create_uploading_asset(payload, current_user, db)\n    return UploadURLResponse(",
+        "    asset = _create_uploading_asset(payload, current_user, db)\n    return UploadURLResponse(",
+    )
+    assert any(
+        "create_media_upload_url" in failure and "_require_storage_configured" in failure
+        for failure in failures(release)
+    )
+
+
+def test_a_guard_that_stops_consulting_storage_is_rejected(release: Path) -> None:
+    """A guard that no longer calls storage_is_configured is a no-op gate."""
+    patch(
+        release,
+        MEDIA_MODULE,
+        "    if not storage_is_configured():",
+        "    if False:",
+    )
+    assert any(
+        "_require_storage_configured() is missing or no longer consults" in failure
+        for failure in failures(release)
+    )
+
+
+def test_the_check_fails_when_the_upload_path_disappears_entirely(release: Path) -> None:
+    """A media module with no `@router` endpoints must not pass vacuously."""
+    (release / MEDIA_MODULE).write_text("x = 1\n", encoding="utf-8")
+    assert any(
+        "no `@router` endpoints found" in failure for failure in failures(release)
+    )
