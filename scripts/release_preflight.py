@@ -22,6 +22,7 @@ usable outside CI without ever pretending it verified something it did not.
 from __future__ import annotations
 
 import argparse
+import ast
 import os
 import re
 import shutil
@@ -45,6 +46,21 @@ RENDER_WORKFLOW = ".github/workflows/render-quality.yml"
 RENDER_BLUEPRINT = "render.yaml"
 ALEMBIC_INI = "backend/alembic.ini"
 BACKEND_ENTRYPOINT = "backend/start.sh"
+MEDIA_MODULE = "backend/app/api/v1/media.py"
+
+# The storage functions that mint something a client uploads to: a presigned
+# PUT URL, a multipart upload id, or a presigned part URL. Each is signed
+# against settings.s3_endpoint_url, so a route that calls one while storage is
+# unconfigured hands the browser a URL pointing at a MinIO nobody started. The
+# guard below refuses that up front; this preflight proves the guard is wired
+# into every such route from the repository alone, with no boto3 and no S3.
+STORAGE_URL_ISSUERS = (
+    "create_upload_url",
+    "create_multipart_upload",
+    "create_multipart_part_url",
+)
+# The configuration-only gate those routes must pass through first.
+STORAGE_GUARD_NAME = "_require_storage_configured"
 
 # Compose files paired with the example that documents the values they interpolate.
 COMPOSE_SOURCES = (
@@ -942,6 +958,103 @@ def _compose_config(
     report.ok(f"{label} parses under `docker compose config`")
 
 
+def _route_functions(module_source: str) -> list[ast.FunctionDef]:
+    """Every function in `module_source` decorated with a `@router.<verb>(...)`."""
+    tree = ast.parse(module_source)
+    routes: list[ast.FunctionDef] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for decorator in node.decorator_list:
+            target = decorator.func if isinstance(decorator, ast.Call) else decorator
+            if (
+                isinstance(target, ast.Attribute)
+                and isinstance(target.value, ast.Name)
+                and target.value.id == "router"
+            ):
+                routes.append(node)
+                break
+    return routes
+
+
+def _names_called_in(node: ast.AST) -> set[str]:
+    """The bare function names called anywhere inside `node`."""
+    called: set[str] = set()
+    for inner in ast.walk(node):
+        if isinstance(inner, ast.Call) and isinstance(inner.func, ast.Name):
+            called.add(inner.func.id)
+    return called
+
+
+def check_upload_endpoints_fail_closed(root: Path, report: Report) -> None:
+    """Every route that mints an upload URL must gate on storage being configured.
+
+    The upload-to-artifact path issues presigned URLs signed against
+    settings.s3_endpoint_url. On a deploy that never set it, that endpoint is
+    still the localhost:9000 development fallback, so an unguarded route returns
+    201 with a URL the browser cannot use -- and only after writing an
+    UPLOADING MediaAsset row. `/ready/storage` makes that state observable; the
+    guard makes the route refuse it. This check proves, from source alone, that
+    the two never drift: no boto3, no S3, no database, no secret.
+    """
+    source = _read(root, MEDIA_MODULE)
+
+    # The module has to actually route, or an empty/renamed file would pass by
+    # vacuously finding no offenders.
+    routes = _route_functions(source)
+    if not routes:
+        report.fail(f"{MEDIA_MODULE}: no `@router` endpoints found; the check cannot run")
+        return
+
+    # And the guard has to exist and reach storage_is_configured, or every route
+    # would satisfy the check by calling a no-op.
+    guard = next(
+        (
+            node
+            for node in ast.walk(ast.parse(source))
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == STORAGE_GUARD_NAME
+        ),
+        None,
+    )
+    if guard is None or "storage_is_configured" not in _names_called_in(guard):
+        report.fail(
+            f"{MEDIA_MODULE}: {STORAGE_GUARD_NAME}() is missing or no longer consults "
+            f"storage_is_configured(); the upload gate is not fail-closed."
+        )
+        return
+
+    unguarded = []
+    guarded = 0
+    for route in routes:
+        called = _names_called_in(route)
+        issues_url = called & set(STORAGE_URL_ISSUERS)
+        if not issues_url:
+            continue
+        if STORAGE_GUARD_NAME in called:
+            guarded += 1
+        else:
+            unguarded.append((route.name, sorted(issues_url)))
+
+    if unguarded:
+        for name, issuers in unguarded:
+            report.fail(
+                f"{MEDIA_MODULE}: {name}() issues {issuers} but does not call "
+                f"{STORAGE_GUARD_NAME}(); it would hand out an upload URL against "
+                f"unconfigured storage."
+            )
+        return
+
+    if guarded == 0:
+        report.fail(
+            f"{MEDIA_MODULE}: no route calls any of {list(STORAGE_URL_ISSUERS)}; the "
+            f"upload path this check guards has moved or been renamed."
+        )
+        return
+
+    report.ok(f"{guarded} upload-URL endpoints fail closed when storage is unconfigured")
+
+
 def check_compose_syntax(root: Path, report: Report) -> None:
     """Validate with the real tool when it is present; say so plainly when it is not."""
     if shutil.which("docker") is None:
@@ -987,6 +1100,7 @@ def run_preflight(root: Path) -> Report:
     check_render_public_origins(root, report)
     check_migration_chain(root, report)
     check_migration_entrypoint(root, report)
+    check_upload_endpoints_fail_closed(root, report)
     check_compose_syntax(root, report)
     return report
 
