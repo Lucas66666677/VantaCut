@@ -159,3 +159,7 @@ jobs:
         env:
           NEXT_PUBLIC_API_URL: http://127.0.0.1:3000
         run: npm run build
+      # The build output, not next.config.mjs, is what `next start` answers from on
+      # Render, so this reads .next/routes-manifest.json and has to follow the build.
+      - name: Verify the production build still declares the cross-origin isolation headers
+        run: node scripts/check-isolation-headers.mjs
