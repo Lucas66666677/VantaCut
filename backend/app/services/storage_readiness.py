@@ -41,24 +41,47 @@ def _probe_bucket() -> bool:
 
 
 def storage_is_configured() -> bool:
-    """Whether a real object-storage endpoint was configured for this deploy.
+    """Whether the *internal* object-storage endpoint was configured.
 
     A pure comparison against the development fallback -- no network, no boto3,
     no credential read -- so it is safe to call on the hot path of every
-    upload-issuing request. `storage_readiness()` layers a bucket probe on top
-    for the readiness endpoint; the upload endpoints want only this cheap half,
-    because handing a client a presigned URL that points at a MinIO nobody
-    started is a failure the API can refuse up front rather than one the
-    browser discovers against a dead `localhost:9000`.
+    upload-issuing request. This is the endpoint the backend itself reaches:
+    `head_bucket`, `complete_multipart_upload`, and the `object_exists` check
+    behind `confirm-upload` all dial `settings.s3_endpoint_url`.
     """
     return settings.s3_endpoint_url != DEVELOPMENT_S3_ENDPOINT
 
 
+def public_storage_is_configured() -> bool:
+    """Whether the *browser-facing* object-storage endpoint was configured.
+
+    Every presigned URL a client actually uses -- the upload PUT, each
+    multipart part, and the artifact download GET -- is signed against
+    `settings.s3_public_endpoint_url` (see app/services/storage.py), which the
+    browser dials directly. It is a distinct host from the internal endpoint by
+    design: `.env.production.example` pairs `S3_ENDPOINT_URL=https://s3...` with
+    `S3_PUBLIC_ENDPOINT_URL=https://media...`. But it defaults to the internal
+    endpoint and, before this check, was validated nowhere -- so a deploy that
+    set `S3_ENDPOINT_URL` and forgot `S3_PUBLIC_ENDPOINT_URL` passed the bucket
+    probe (server-side `HeadBucket`) and still handed every visitor a presigned
+    URL pointing at a host the browser cannot reach. Readiness cannot see the
+    failure because the endpoint it never looked at is the one that breaks.
+
+    Pure comparison, like `storage_is_configured`: safe on the request hot path.
+    """
+    return settings.s3_public_endpoint_url != DEVELOPMENT_S3_ENDPOINT
+
+
 def storage_readiness() -> dict[str, bool]:
     configured = storage_is_configured()
+    public_configured = public_storage_is_configured()
     reachable = _probe_bucket() if configured else False
     return {
         "configured": configured,
+        "public_endpoint_configured": public_configured,
         "bucket_reachable": reachable,
-        "uploads_expected_to_work": configured and reachable,
+        # The browser upload/download path needs the internal endpoint reachable
+        # *and* the public endpoint configured. Either one missing breaks the
+        # end-to-end flow, so both gate the single headline signal.
+        "uploads_expected_to_work": configured and public_configured and reachable,
     }

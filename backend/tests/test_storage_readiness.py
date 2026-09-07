@@ -13,6 +13,20 @@ from app.services.storage_readiness import DEVELOPMENT_S3_ENDPOINT, storage_read
 def s3_endpoint(monkeypatch):
     def _set(value: str) -> None:
         monkeypatch.setattr(config.settings, "s3_endpoint_url", value, raising=False)
+        # A single-host deploy uses the same value for both endpoints, which is
+        # also the config default (s3_public_endpoint_url falls back to
+        # s3_endpoint_url). Tests that split them call s3_public_endpoint after.
+        monkeypatch.setattr(config.settings, "s3_public_endpoint_url", value, raising=False)
+
+    return _set
+
+
+@pytest.fixture
+def s3_public_endpoint(monkeypatch):
+    """Set only the browser-facing endpoint, to exercise it independently."""
+
+    def _set(value: str) -> None:
+        monkeypatch.setattr(config.settings, "s3_public_endpoint_url", value, raising=False)
 
     return _set
 
@@ -51,7 +65,12 @@ def test_result_is_booleans_only(s3_endpoint, monkeypatch) -> None:
     monkeypatch.setattr("app.services.storage_readiness._probe_bucket", lambda: True)
     body = storage_readiness()
 
-    assert set(body) == {"configured", "bucket_reachable", "uploads_expected_to_work"}
+    assert set(body) == {
+        "configured",
+        "public_endpoint_configured",
+        "bucket_reachable",
+        "uploads_expected_to_work",
+    }
     assert all(isinstance(value, bool) for value in body.values())
     assert body["uploads_expected_to_work"] is True
 
@@ -102,4 +121,59 @@ def test_development_endpoint_constant_matches_the_real_config_default(monkeypat
     assert (
         _config_default_with_env_unset(monkeypatch, "S3_ENDPOINT_URL", "s3_endpoint_url")
         == DEVELOPMENT_S3_ENDPOINT
+    )
+
+
+def test_a_public_endpoint_left_at_the_dev_default_blocks_uploads(
+    s3_endpoint, s3_public_endpoint, monkeypatch
+) -> None:
+    """Internal endpoint real, bucket reachable, public endpoint forgotten.
+
+    This is the deploy `.env.production.example` invites: it pairs a real
+    `S3_ENDPOINT_URL` with a distinct `S3_PUBLIC_ENDPOINT_URL`, which defaults to
+    the internal one if unset. Every presigned URL the browser uses is signed
+    against the public endpoint, so leaving it on the dev default hands out
+    unreachable URLs while `configured` and `bucket_reachable` both read true.
+    """
+    s3_endpoint("https://s3.example.invalid")
+    s3_public_endpoint(DEVELOPMENT_S3_ENDPOINT)
+    monkeypatch.setattr("app.services.storage_readiness._probe_bucket", lambda: True)
+    body = storage_readiness()
+
+    assert body["configured"] is True
+    assert body["bucket_reachable"] is True
+    assert body["public_endpoint_configured"] is False
+    assert body["uploads_expected_to_work"] is False
+
+
+def test_a_distinct_public_endpoint_reads_as_ready(
+    s3_endpoint, s3_public_endpoint, monkeypatch
+) -> None:
+    """The production shape: two different real hosts, both configured."""
+    s3_endpoint("https://s3.example.invalid")
+    s3_public_endpoint("https://media.example.invalid")
+    monkeypatch.setattr("app.services.storage_readiness._probe_bucket", lambda: True)
+    body = storage_readiness()
+
+    assert body["public_endpoint_configured"] is True
+    assert body["uploads_expected_to_work"] is True
+
+
+def test_public_endpoint_default_falls_back_to_the_internal_endpoint(monkeypatch) -> None:
+    """Guards the guard on the config default itself.
+
+    `s3_public_endpoint_url` defaults to `s3_endpoint_url`. If that fallback is
+    ever dropped, a single-host deploy that sets only `S3_ENDPOINT_URL` would
+    start reading `public_endpoint_configured: false` and refusing uploads it
+    used to serve -- so the coupling is pinned here, from a clean environment.
+    """
+    monkeypatch.delenv("S3_PUBLIC_ENDPOINT_URL", raising=False)
+    monkeypatch.setenv("S3_ENDPOINT_URL", "https://single-host.example.invalid")
+    spec = importlib.util.spec_from_file_location(
+        "_vantacut_test_config_public_default", Path(config.__file__)
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert (
+        module.Settings.s3_public_endpoint_url == "https://single-host.example.invalid"
     )

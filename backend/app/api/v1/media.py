@@ -20,7 +20,7 @@ from app.schemas.media import (
     UploadURLResponse,
 )
 from app.services.storage import complete_multipart_upload, create_multipart_part_url, create_multipart_upload, create_upload_url, object_exists
-from app.services.storage_readiness import storage_is_configured
+from app.services.storage_readiness import public_storage_is_configured, storage_is_configured
 from app.schemas.semantic_search import MediaSemanticGridItem, MediaSemanticGridRequest, MediaSemanticGridResponse, MediaSemanticSearchRequest, MediaSemanticSearchResponse, MediaSemanticSearchResult
 from app.tasks.media_tasks import process_new_media
 from app.schemas.derived_previews import DerivedPreviewResponse
@@ -32,18 +32,24 @@ router = APIRouter(prefix="/media", tags=["media"])
 def _require_storage_configured() -> None:
     """Refuse to hand out an upload URL when storage is not configured.
 
-    Every presigned URL these endpoints mint is signed against
-    ``settings.s3_endpoint_url``. When that is still the development
-    ``localhost:9000`` fallback, the URL is valid-looking and useless: the
-    browser PUTs to a MinIO nobody started and the upload fails opaquely,
-    after a `MediaAsset` row has already been written in ``UPLOADING`` state.
-    Failing closed here, before that row is created, keeps the storage
-    contract honest at the API boundary -- the same state ``/ready/storage``
-    reports, refused rather than merely observed. It is a configuration check
-    only (no bucket probe), so it never turns a storage blip into a 503 on a
-    correctly-configured deploy.
+    These endpoints mint a presigned URL the browser dials directly, signed
+    against ``settings.s3_public_endpoint_url``; the backend later finalises the
+    object against ``settings.s3_endpoint_url``. Both have to be real. When
+    either is still the development ``localhost:9000`` fallback the URL is
+    valid-looking and useless -- the browser PUTs to a host nobody is serving
+    and the upload fails opaquely, after a `MediaAsset` row has already been
+    written in ``UPLOADING`` state. The public endpoint is the one most easily
+    missed: it is a distinct host in production (`.env.production.example`
+    pairs ``S3_ENDPOINT_URL`` with a separate ``S3_PUBLIC_ENDPOINT_URL``) and
+    defaults to the internal one, so a deploy that sets only the internal
+    endpoint passes the bucket probe and still hands out unreachable URLs.
+
+    Failing closed here, before that row is created, keeps the storage contract
+    honest at the API boundary. It is a configuration check only (no bucket
+    probe), so it never turns a storage blip into a 503 on a correctly
+    configured deploy.
     """
-    if not storage_is_configured():
+    if not storage_is_configured() or not public_storage_is_configured():
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Object storage is not configured for this deployment",

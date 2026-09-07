@@ -96,9 +96,11 @@ def _patch_boundaries(monkeypatch, calls):
     monkeypatch.setattr(media, "create_download_url", lambda *args, **kwargs: calls.append("create_download_url") or "https://storage/download")
     monkeypatch.setattr(media.process_new_media, "delay", lambda *args, **kwargs: calls.append("process_new_media") or _Task())
     # These tests exercise ownership, not the storage-configured gate: assume a
-    # configured deployment so the upload routes reach their identity checks.
-    # The gate's own fail-closed behaviour is covered separately below.
+    # configured deployment (both the internal and the browser-facing endpoint)
+    # so the upload routes reach their identity checks. The gate's own
+    # fail-closed behaviour is covered separately below.
     monkeypatch.setattr(media, "storage_is_configured", lambda: True)
+    monkeypatch.setattr(media, "public_storage_is_configured", lambda: True)
 
 
 @pytest.mark.parametrize("headers", [{}, {"Authorization": "Bearer malformed"}])
@@ -156,6 +158,35 @@ def test_m11_upload_urls_are_refused_when_storage_is_unconfigured(db_session, mo
     for method, url, body in url_issuing:
         response = getattr(client, method)(url, headers=_auth(owner), json=body)
         assert response.status_code == 503, (url, response.status_code, response.text)
+    assert not ({"create_upload_url", "create_multipart_upload", "create_multipart_part_url"} & set(calls))
+
+
+def test_m11_upload_urls_are_refused_when_only_the_public_endpoint_is_unconfigured(db_session, monkeypatch):
+    """The browser-facing endpoint alone is enough to break the flow.
+
+    Every presigned URL is signed against s3_public_endpoint_url. With the
+    internal endpoint configured (bucket probe would pass) but the public
+    endpoint left at its dev default, the routes still fail closed rather than
+    handing the browser a URL against a host it cannot reach.
+    """
+    calls = []; _patch_boundaries(monkeypatch, calls)
+    monkeypatch.setattr(media, "storage_is_configured", lambda: True)
+    monkeypatch.setattr(media, "public_storage_is_configured", lambda: False)
+    owner = _user(db_session); graph = _graph(db_session, owner); client = _client(db_session)
+    project, _derived, part, _complete, _confirm = graph
+    upload = {"project_id": str(project.id), "filename": "new.mp4", "size_bytes": 10, "content_type": "video/mp4", "media_type": "video"}
+    asset_count = db_session.query(MediaAsset).count()
+
+    url_issuing = [
+        ("post", f"{API}/media/upload-url", upload),
+        ("post", f"{API}/media/multipart-upload/initiate", {**upload, "filename": "multipart.mp4"}),
+        ("post", f"{API}/media/multipart-upload/part-url", {"asset_id": str(part.id), "upload_id": "upload", "part_number": 1}),
+    ]
+    for method, url, body in url_issuing:
+        response = getattr(client, method)(url, headers=_auth(owner), json=body)
+        assert response.status_code == 503, (url, response.status_code, response.text)
+    assert not ({"create_upload_url", "create_multipart_upload", "create_multipart_part_url"} & set(calls))
+    assert db_session.query(MediaAsset).count() == asset_count
 
     # No presigned URL was minted and no UPLOADING row was written.
     assert not ({"create_upload_url", "create_multipart_upload", "create_multipart_part_url"} & set(calls))
