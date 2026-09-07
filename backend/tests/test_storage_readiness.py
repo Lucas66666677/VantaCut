@@ -9,24 +9,37 @@ from app.core import config
 from app.services.storage_readiness import DEVELOPMENT_S3_ENDPOINT, storage_readiness
 
 
+@pytest.fixture(autouse=True)
+def _default_non_production(monkeypatch):
+    """Keep these unit tests in development posture unless one opts into prod.
+
+    `public_storage_is_configured()` is production-gated, so a stray ambient
+    ENVIRONMENT=production would otherwise change what the value-only tests below
+    assert. The clean-env tests set their own environment explicitly.
+    """
+    monkeypatch.setattr(config.settings, "environment", "development", raising=False)
+
+
 @pytest.fixture
 def s3_endpoint(monkeypatch):
     def _set(value: str) -> None:
         monkeypatch.setattr(config.settings, "s3_endpoint_url", value, raising=False)
         # A single-host deploy uses the same value for both endpoints, which is
         # also the config default (s3_public_endpoint_url falls back to
-        # s3_endpoint_url). Tests that split them call s3_public_endpoint after.
+        # s3_endpoint_url, unset). Tests that split them call s3_public_endpoint.
         monkeypatch.setattr(config.settings, "s3_public_endpoint_url", value, raising=False)
+        monkeypatch.setattr(config.settings, "s3_public_endpoint_url_explicit", False, raising=False)
 
     return _set
 
 
 @pytest.fixture
 def s3_public_endpoint(monkeypatch):
-    """Set only the browser-facing endpoint, to exercise it independently."""
+    """Set only the browser-facing endpoint explicitly, exercising it alone."""
 
     def _set(value: str) -> None:
         monkeypatch.setattr(config.settings, "s3_public_endpoint_url", value, raising=False)
+        monkeypatch.setattr(config.settings, "s3_public_endpoint_url_explicit", True, raising=False)
 
     return _set
 
@@ -177,3 +190,106 @@ def test_public_endpoint_default_falls_back_to_the_internal_endpoint(monkeypatch
     assert (
         module.Settings.s3_public_endpoint_url == "https://single-host.example.invalid"
     )
+
+
+def _readiness_under_clean_env(monkeypatch, *, env: dict[str, str]):
+    """Re-evaluate config from a clean environment, then read storage_readiness.
+
+    `s3_public_endpoint_url` and `s3_public_endpoint_url_explicit` are frozen
+    from os.environ at import time, so "the variable is genuinely absent" can
+    only be exercised by re-executing the module with it deleted -- setting an
+    attribute to a stand-in value would not reproduce the default-fallback that
+    is the whole bug. The freshly computed values are then applied to the live
+    `settings` object storage_readiness reads. Returns (fresh Settings, body).
+    """
+    for name in ("S3_ENDPOINT_URL", "S3_PUBLIC_ENDPOINT_URL", "ENVIRONMENT", "JWT_SECRET_KEY"):
+        monkeypatch.delenv(name, raising=False)
+    # config.py refuses to import in a non-development environment without a JWT
+    # secret; supply a disposable stand-in so re-executing it as production does
+    # not trip an unrelated check. Never a real secret, set only in this process.
+    env = {"JWT_SECRET_KEY": "storage-readiness-test-secret-not-real", **env}
+    for name, value in env.items():
+        monkeypatch.setenv(name, value)
+
+    spec = importlib.util.spec_from_file_location(
+        "_vantacut_test_clean_config", Path(config.__file__)
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    fresh = module.Settings
+
+    for attr in (
+        "environment",
+        "s3_endpoint_url",
+        "s3_public_endpoint_url",
+        "s3_public_endpoint_url_explicit",
+    ):
+        monkeypatch.setattr(config.settings, attr, getattr(fresh, attr), raising=False)
+    monkeypatch.setattr("app.services.storage_readiness._probe_bucket", lambda: True)
+    return fresh, storage_readiness()
+
+
+def test_production_requires_an_explicit_public_endpoint(monkeypatch) -> None:
+    """The real forgotten-endpoint case: internal real/private, public unset.
+
+    `S3_PUBLIC_ENDPOINT_URL` defaults to the internal endpoint, so a value-only
+    check reads the inherited private host as configured. From a genuinely clean
+    production environment the browser endpoint was never declared, and the host
+    it inherited is not assumed reachable, so readiness must refuse it -- even
+    though `configured` and `bucket_reachable` both hold.
+    """
+    fresh, body = _readiness_under_clean_env(
+        monkeypatch,
+        env={
+            "ENVIRONMENT": "production",
+            # Real, non-local, and private -- a VPC host the browser cannot dial.
+            "S3_ENDPOINT_URL": "http://minio.internal:9000",
+            # S3_PUBLIC_ENDPOINT_URL deliberately absent.
+        },
+    )
+
+    # The inherited default is non-local, and the absence was recorded.
+    assert fresh.s3_public_endpoint_url == "http://minio.internal:9000"
+    assert fresh.s3_public_endpoint_url_explicit is False
+
+    assert body["configured"] is True
+    assert body["bucket_reachable"] is True
+    assert body["public_endpoint_configured"] is False
+    assert body["uploads_expected_to_work"] is False
+
+
+def test_production_with_an_explicit_public_endpoint_reads_as_ready(monkeypatch) -> None:
+    """Declaring the browser endpoint on purpose is what production must do."""
+    fresh, body = _readiness_under_clean_env(
+        monkeypatch,
+        env={
+            "ENVIRONMENT": "production",
+            "S3_ENDPOINT_URL": "http://minio.internal:9000",
+            "S3_PUBLIC_ENDPOINT_URL": "https://media.example.com",
+        },
+    )
+
+    assert fresh.s3_public_endpoint_url_explicit is True
+    assert body["public_endpoint_configured"] is True
+    assert body["uploads_expected_to_work"] is True
+
+
+def test_non_production_single_host_default_is_kept(monkeypatch) -> None:
+    """Outside production the public==internal fallback stays intentional.
+
+    A development or single-host deploy that sets only `S3_ENDPOINT_URL` to a
+    real host keeps working; the explicit-endpoint requirement is production-only.
+    """
+    fresh, body = _readiness_under_clean_env(
+        monkeypatch,
+        env={
+            "ENVIRONMENT": "development",
+            "S3_ENDPOINT_URL": "https://single-host.example.com",
+            # S3_PUBLIC_ENDPOINT_URL absent -> falls back to the internal host.
+        },
+    )
+
+    assert fresh.s3_public_endpoint_url == "https://single-host.example.com"
+    assert fresh.s3_public_endpoint_url_explicit is False
+    assert body["public_endpoint_configured"] is True
+    assert body["uploads_expected_to_work"] is True

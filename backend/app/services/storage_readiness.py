@@ -60,16 +60,27 @@ def public_storage_is_configured() -> bool:
     `settings.s3_public_endpoint_url` (see app/services/storage.py), which the
     browser dials directly. It is a distinct host from the internal endpoint by
     design: `.env.production.example` pairs `S3_ENDPOINT_URL=https://s3...` with
-    `S3_PUBLIC_ENDPOINT_URL=https://media...`. But it defaults to the internal
-    endpoint and, before this check, was validated nowhere -- so a deploy that
-    set `S3_ENDPOINT_URL` and forgot `S3_PUBLIC_ENDPOINT_URL` passed the bucket
-    probe (server-side `HeadBucket`) and still handed every visitor a presigned
-    URL pointing at a host the browser cannot reach. Readiness cannot see the
-    failure because the endpoint it never looked at is the one that breaks.
+    `S3_PUBLIC_ENDPOINT_URL=https://media...`.
+
+    The trap is that it *defaults to the internal endpoint*. Checking only that
+    the value is non-local is not enough: when the internal endpoint is a real
+    private host (a VPC address, a compose service name) and
+    `S3_PUBLIC_ENDPOINT_URL` was never set, the inherited value is non-local and
+    still unreachable from a browser. So in production the browser endpoint must
+    be declared *explicitly* -- an inherited default reads as unconfigured,
+    however real the host it was inherited from looks. Outside production the
+    single-host fallback (public == internal) is intentional and kept, as long
+    as it is not the `localhost:9000` development default.
 
     Pure comparison, like `storage_is_configured`: safe on the request hot path.
     """
-    return settings.s3_public_endpoint_url != DEVELOPMENT_S3_ENDPOINT
+    if settings.s3_public_endpoint_url == DEVELOPMENT_S3_ENDPOINT:
+        return False
+    if settings.environment == "production" and not settings.s3_public_endpoint_url_explicit:
+        # Inherited the internal endpoint by default; in production that host is
+        # not assumed to be browser-reachable, so it must be stated on purpose.
+        return False
+    return True
 
 
 def storage_readiness() -> dict[str, bool]:
