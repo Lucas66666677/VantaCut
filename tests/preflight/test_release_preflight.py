@@ -565,7 +565,7 @@ def test_a_guard_that_stops_consulting_storage_is_rejected(release: Path) -> Non
     patch(
         release,
         MEDIA_MODULE,
-        "    if not storage_is_configured():",
+        "    if not storage_is_configured() or not public_storage_is_configured():",
         "    if False:",
     )
     assert any(

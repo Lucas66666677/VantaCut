@@ -11,6 +11,12 @@ class Settings:
     mock_ai_delay_seconds: float = float(os.getenv("MOCK_AI_DELAY_SECONDS", "0.35"))
     s3_endpoint_url: str = os.getenv("S3_ENDPOINT_URL", "http://localhost:9000")
     s3_public_endpoint_url: str = os.getenv("S3_PUBLIC_ENDPOINT_URL", s3_endpoint_url)
+    # Whether S3_PUBLIC_ENDPOINT_URL was set explicitly, as opposed to falling back
+    # to the internal endpoint above. In production the fallback is unsafe -- the
+    # internal endpoint is often a private host the browser cannot reach -- so
+    # readiness requires the browser endpoint to be declared, and this flag is how
+    # "declared" is told apart from "inherited a private default".
+    s3_public_endpoint_url_explicit: bool = os.getenv("S3_PUBLIC_ENDPOINT_URL") is not None
     s3_access_key: str = os.getenv("S3_ACCESS_KEY", "minioadmin")
     s3_secret_key: str = os.getenv("S3_SECRET_KEY", "minioadmin123")
     s3_region: str = os.getenv("S3_REGION", "us-east-1")
