@@ -23,6 +23,16 @@ on:
       - "frontend/Dockerfile*"
       - "scripts/release_preflight.py"
       - "tests/preflight/**"
+      # The public-journey checks read the whole v1 route surface and the
+      # studio entry, so a PR that adds the missing project-creation route
+      # has to re-run them -- that is when their strict xfails flip and ask
+      # to be deleted.
+      - "backend/app/api/v1/**"
+      - "backend/app/tasks/platform_tasks.py"
+      - "tests/qa/create_render_fixture.py"
+      - "frontend/features/onboarding/studio-launchpad.tsx"
+      - "frontend/features/media/local-media-bin.tsx"
+      - "frontend/features/workspace/adaptive-editor-workspace.tsx"
       - ".github/workflows/render-quality.yml"
       - ".github/workflows/release-preflight.yml"
   push:
