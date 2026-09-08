@@ -7,6 +7,7 @@ from sqlalchemy import text
 
 from app.api import api_router
 from app.core.config import settings
+from app.core.revision import deployed_revision
 from app.db.session import SessionLocal
 
 app = FastAPI(title="AI Video Editor API", version="0.1.0")
@@ -24,6 +25,34 @@ app.include_router(api_router)
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/version")
+def deployed_revision_endpoint() -> dict[str, str | None]:
+    """Which commit this process was built from, and nothing else.
+
+    A fourth route rather than a field on any of the three above, because each
+    of those is already a contract something reads: the Render health gate and
+    the compose healthcheck probe /health, scripts/release_preflight.py pins
+    /health and /ready as required routes, and /ready/storage's four booleans
+    are what tells an operator whether uploads can work. Adding to any of them
+    is a change to a contract; a different question gets its own payload.
+
+    Three answers, each settling something different:
+
+    * 404 -- the running build predates this route, so a merge has not reached
+      the service. That is a revision fact on its own.
+    * {"revision": null} -- this build or later is deployed, with
+      RENDER_GIT_COMMIT unset or holding something that is not a commit SHA.
+    * {"revision": "<sha>"} -- exactly that commit.
+
+    Like /health this consults nothing -- no database, no Redis, no S3 -- so it
+    still answers during the outage that prompts the question. And like
+    /ready/storage it is unauthenticated, so it does not decide for itself what
+    is safe to publish: app/core/revision.py does, by emitting nothing that is
+    not hexadecimal.
+    """
+    return {"revision": deployed_revision()}
 
 
 @app.get("/ready")

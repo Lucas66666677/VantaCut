@@ -29,6 +29,63 @@ correct and were checked, not assumed:
   at build time. (It is a build ARG in `frontend/Dockerfile.production`, not a
   runtime variable — setting it after the fact does nothing until a rebuild.)
 
+## Which revision is deployed
+
+`GET /version` reports the commit the running process was built from:
+
+```bash
+curl -fsS https://vantacut-backend.onrender.com/version
+```
+
+```json
+{ "revision": "596a4931bd7e0c85f2a4d61e93c7b0284fa5de17" }
+```
+
+Three answers, each settling something different:
+
+| Response | What is deployed |
+| --- | --- |
+| `404` | A build older than the commit that added this route — the merge has not reached the service |
+| `{"revision": null}` | This build or later, with `RENDER_GIT_COMMIT` unset or not a commit SHA |
+| `{"revision": "<sha>"}` | Exactly that commit |
+
+Compare with `git rev-parse origin/main`. Check it **before** anything else
+after a deploy: every other probe is answered by whichever image is running, so
+a green result against the previous build is not evidence about the new one.
+
+This closes a real gap. Until now, the only way to establish that a merge had
+gone live was to find a behavioural difference between releases — the evidence
+that PR #42 was deployed was `/ready/storage` growing a
+`public_endpoint_configured` field. That works once per release, and not at all
+for a release that changes nothing observable.
+
+`RENDER_GIT_COMMIT` is set by Render itself, per deploy, at build time and at
+runtime. Nothing needs configuring, and it should **not** be set by hand: a
+value written into the service's own environment would pin `/version` to
+whatever commit was current when it was typed, and the route would then report
+the wrong revision with full confidence — worse than reporting none.
+
+Like `/health`, the route consults nothing — no PostgreSQL, no Redis, no S3 —
+so it still answers during the outage that usually prompts the question. Unlike
+`/health` it is not the container health gate: `render.yaml` keeps
+`healthCheckPath: /health`, and the preflight fails if that moves.
+
+The route is unauthenticated, so `app/core/revision.py` decides what may leave
+it: 7–40 anchored hexadecimal characters, lowercased, and nothing else. A
+variable holding a database URL, an S3 secret or a pasted `.env` line reports
+`null` rather than being echoed to an anonymous caller, and the rejected value
+is not logged either — the reason to refuse it is that it might be a secret, so
+logging it would move the leak rather than close it. This is the same rule
+`/ready/storage` states as "booleans only, deliberately", applied to a value
+that is not a boolean.
+
+`scripts/release_preflight.py` holds the route to that with
+`check_version_route_publishes_only_the_revision`: the route must exist, take
+no parameters, and return exactly `{"revision": deployed_revision()}`. It is a
+whitelist rather than a scan for secret-shaped names, because the realistic
+additions — `environment`, a bucket name, a provider flag — are configuration
+that no marker scan would object to.
+
 ## Blocker 1 — object storage is unverified, and nothing surfaces that
 
 `S3_ENDPOINT_URL`, `S3_ACCESS_KEY` and `S3_SECRET_KEY` default to a local MinIO

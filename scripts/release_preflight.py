@@ -83,6 +83,18 @@ LOOPBACK_URL = re.compile(r"http://127\.0\.0\.1:(\d+)(/[^\s'\"]*)")
 # restarts on liveness, a load balancer drains on readiness. Both must keep existing.
 REQUIRED_API_ROUTES = ("/health", "/ready")
 
+# The deployed-revision route. It is the only thing the API serves that says *which
+# build* is answering, so a release checked against a service still running the previous
+# image is a release verified against the wrong thing.
+VERSION_ROUTE = "/version"
+# The one field it may publish, and the one expression that may produce it. A whitelist
+# rather than a scan for secret-shaped names: the route is unauthenticated and reports a
+# single fact, so anything else appearing there -- `environment`, a bucket name, a
+# provider flag -- is configuration reaching a public endpoint by accretion, and none of
+# those would look secret-shaped to a marker scan.
+VERSION_PAYLOAD_FIELD = "revision"
+VERSION_PAYLOAD_EXPRESSION = "deployed_revision()"
+
 # The Render health gate restarts the container; it is not a load-balancer drain. So it
 # has to be the liveness route, and never a readiness one: /ready opens PostgreSQL and
 # Redis and answers 503 when either is unreachable, and both are externally managed
@@ -986,6 +998,98 @@ def _names_called_in(node: ast.AST) -> set[str]:
     return called
 
 
+def _app_route_handler(source: str, route: str) -> ast.FunctionDef | ast.AsyncFunctionDef | None:
+    """The `@app.get("<route>")` handler in an API module, found by its path.
+
+    Located by the decorator rather than the function name, so renaming the
+    handler cannot quietly empty the result and turn a real check into a
+    vacuous one.
+    """
+    for node in ast.walk(ast.parse(source)):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for decorator in node.decorator_list:
+            if (
+                isinstance(decorator, ast.Call)
+                and decorator.args
+                and isinstance(decorator.args[0], ast.Constant)
+                and decorator.args[0].value == route
+            ):
+                return node
+    return None
+
+
+def check_version_route_publishes_only_the_revision(root: Path, report: Report) -> None:
+    """The one public route that says which build is running, held to one field.
+
+    Every other check in this file verifies the *wiring* of a release. This one
+    exists because a release verified against the wrong build is not verified at
+    all: with no revision endpoint, a service still serving the previous image
+    passes every probe above, and the only way this repository has ever
+    established that a merge went live was to notice a behavioural difference
+    between two releases.
+
+    Two properties, both read from source with no import, no network and no
+    secret:
+
+    1. The route exists. Deleting it would leave operators back to inference.
+    2. It publishes the revision and nothing else. The route is unauthenticated,
+       so a second field is a configuration leak to any caller -- and the
+       realistic additions (`environment`, a bucket, a provider name) are not
+       secret-shaped, so a marker scan would pass every one of them. A
+       whitelist is available here precisely because the route reports a single
+       fact, and it is taken for that reason.
+    """
+    handler = _app_route_handler(_read(root, API_MODULE), VERSION_ROUTE)
+    if handler is None:
+        report.fail(
+            f"{API_MODULE}: {VERSION_ROUTE} is not declared, so nothing the service "
+            f"serves says which commit is deployed; a release could be verified "
+            f"against the previous image without anything noticing."
+        )
+        return
+
+    returned = next(
+        (node.value for node in ast.walk(handler) if isinstance(node, ast.Return)),
+        None,
+    )
+    if not isinstance(returned, ast.Dict):
+        report.fail(
+            f"{API_MODULE}: {VERSION_ROUTE} no longer returns a dict literal, so what it "
+            f"publishes to an unauthenticated caller cannot be read from source."
+        )
+        return
+
+    published = {
+        (
+            key.value if isinstance(key, ast.Constant) else ast.unparse(key)
+        ): ast.unparse(value)
+        for key, value in zip(returned.keys, returned.values)
+    }
+    unexpected = sorted(
+        f"{field}={expression}"
+        for field, expression in published.items()
+        if field != VERSION_PAYLOAD_FIELD or expression != VERSION_PAYLOAD_EXPRESSION
+    )
+    if unexpected:
+        report.fail(
+            f"{API_MODULE}: {VERSION_ROUTE} publishes {'; '.join(unexpected)} to an "
+            f"unauthenticated caller; it may serve "
+            f"{VERSION_PAYLOAD_FIELD}={VERSION_PAYLOAD_EXPRESSION} and nothing else."
+        )
+        return
+
+    if handler.args.args or handler.args.kwonlyargs:
+        report.fail(
+            f"{API_MODULE}: {VERSION_ROUTE} takes parameters, so FastAPI would inject a "
+            f"dependency into the one route that has to answer while a dependency is "
+            f"down -- which is when the deployed revision is asked for."
+        )
+        return
+
+    report.ok(f"{API_MODULE}: {VERSION_ROUTE} publishes the deployed revision and nothing else")
+
+
 def check_upload_endpoints_fail_closed(root: Path, report: Report) -> None:
     """Every route that mints an upload URL must gate on storage being configured.
 
@@ -1101,6 +1205,7 @@ def run_preflight(root: Path) -> Report:
     check_migration_chain(root, report)
     check_migration_entrypoint(root, report)
     check_upload_endpoints_fail_closed(root, report)
+    check_version_route_publishes_only_the_revision(root, report)
     check_compose_syntax(root, report)
     return report
 
