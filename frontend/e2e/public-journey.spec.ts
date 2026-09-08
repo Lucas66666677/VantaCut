@@ -53,6 +53,12 @@ function syntheticUpload(): { bytes: Buffer; contentType: string; filename: stri
   return { bytes, contentType: "application/octet-stream", filename: `public-journey-probe-${Date.now()}.bin` };
 }
 
+// This suite deliberately handles a real bearer token. Playwright traces
+// include browser/network state and are retained on failure by the shared
+// config, so disable them here rather than risk packaging credentials in a
+// local or subsequently uploaded report.
+test.use({ trace: "off" });
+
 test.describe("public journey", () => {
   test.skip(
     !BASE_URL || !API_URL || !ACCESS_TOKEN,
