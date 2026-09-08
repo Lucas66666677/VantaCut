@@ -4,6 +4,7 @@ import { useSearchParams } from "next/navigation";
 import { useMemo } from "react";
 
 import { AdaptiveEditorWorkspace } from "@/features/workspace/adaptive-editor-workspace";
+import { useStudioProject } from "@/features/onboarding/use-studio-project";
 import type { TimelineClipInput } from "@/types/timeline";
 
 const sampleTimeline: TimelineClipInput[] = [
@@ -16,5 +17,10 @@ export function StudioLaunchpad() {
   const params = useSearchParams();
   const isDemo = params.get("mode") === "demo";
   const timeline = useMemo(() => isDemo ? sampleTimeline : [], [isDemo]);
-  return <AdaptiveEditorWorkspace timeline={timeline} />;
+  // Without this the workspace has no project, so `LocalMediaBin` keeps every
+  // file in the browser while the surrounding copy promises background cloud
+  // sync. It resolves to `undefined` until the first response and whenever
+  // provisioning fails, which is the local-only state the bin already renders.
+  const { projectId } = useStudioProject();
+  return <AdaptiveEditorWorkspace timeline={timeline} projectId={projectId} />;
 }

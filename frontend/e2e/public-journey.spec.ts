@@ -19,19 +19,21 @@ import { expect, test } from "@playwright/test";
  *   VANTACUT_PUBLIC_BASE_URL       the frontend origin to drive
  *   VANTACUT_PUBLIC_API_URL        the backend origin it talks to
  *   VANTACUT_PUBLIC_ACCESS_TOKEN   a bearer token for an existing account
- *   VANTACUT_PUBLIC_PROJECT_ID     a project that account already owns
+ *   VANTACUT_PUBLIC_PROJECT_ID     optional: reuse a project instead of creating one
  *   VANTACUT_PUBLIC_ALLOW_UPLOAD   must be exactly "1" to write anything
  *
- * ## Why a project id has to be supplied
+ * ## The project is now created by the product
  *
- * It cannot be created through the product. No route in `backend/app/api/v1`
- * constructs a `Project` — see `tests/preflight/test_public_journey.py`, which
- * proves it statically — so the only ways to obtain one are the admin-token
- * gated Platform API or a direct database insert, which is what the
- * repository's own QA fixture does. That is the blocker this file is shaped
- * around, and the reason the variable exists rather than a registration step:
- * a genuinely public journey would not need an operator to hand the test a
- * project. Delete this variable when a project-creation route exists.
+ * This file used to *require* `VANTACUT_PUBLIC_PROJECT_ID`, because no route in
+ * `backend/app/api/v1` constructed a `Project` — the only ways to obtain one
+ * were the admin-token gated Platform API or a direct database insert, which is
+ * what the repository's own QA fixture did. `POST /api/v1/projects` closed that,
+ * so the write phase now creates its own project through the product. That is
+ * the point rather than a convenience: a journey needing an operator to hand it
+ * a project was not the journey a visitor takes.
+ *
+ * The variable survives as an override, for an operator who would rather reuse
+ * one workspace than leave a probe project behind on each run.
  */
 
 const BASE_URL = process.env.VANTACUT_PUBLIC_BASE_URL;
@@ -92,18 +94,28 @@ test.describe("public journey", () => {
   });
 
   test("storage accepts a real upload and the asset leaves UPLOADING", async ({ request }) => {
-    test.skip(
-      !ALLOW_UPLOAD || !PROJECT_ID,
-      "writes are opt-in: set VANTACUT_PUBLIC_ALLOW_UPLOAD=1 and VANTACUT_PUBLIC_PROJECT_ID",
-    );
+    test.skip(!ALLOW_UPLOAD, "writes are opt-in: set VANTACUT_PUBLIC_ALLOW_UPLOAD=1");
 
     const authorised = { Authorization: `Bearer ${ACCESS_TOKEN}` };
     const file = syntheticUpload();
 
+    // The leg that did not exist. Created here through the product rather than
+    // accepted from the environment, so this phase exercises the journey a
+    // visitor takes; the override only exists to avoid stray probe projects.
+    let projectId = PROJECT_ID;
+    if (!projectId) {
+      const created = await request.post(`${API_URL}/api/v1/projects`, {
+        headers: authorised,
+        data: { name: "public journey probe" },
+      });
+      expect(created.status(), await created.text()).toBe(201);
+      projectId = (await created.json() as { id: string }).id;
+    }
+
     const initiate = await request.post(`${API_URL}/api/v1/media/multipart-upload/initiate`, {
       headers: authorised,
       data: {
-        project_id: PROJECT_ID,
+        project_id: projectId,
         filename: file.filename,
         size_bytes: file.bytes.byteLength,
         content_type: file.contentType,
