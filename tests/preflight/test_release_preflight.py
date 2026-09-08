@@ -580,3 +580,50 @@ def test_the_check_fails_when_the_upload_path_disappears_entirely(release: Path)
     assert any(
         "no `@router` endpoints found" in failure for failure in failures(release)
     )
+
+
+def test_removing_the_version_route_is_rejected(release: Path) -> None:
+    """Without it, a release can only be verified against the wrong build.
+
+    Every other rule in this file checks the release *wiring*. This one exists
+    because a probe answered by the previous image looks exactly like a probe
+    answered by the new one.
+    """
+    patch(release, "backend/app/main.py", '@app.get("/version")', '@app.get("/build")')
+    assert any(
+        "/version is not declared" in failure for failure in failures(release)
+    )
+
+
+def test_a_second_field_on_the_version_payload_is_rejected(release: Path) -> None:
+    """`environment` is the realistic mistake, and the reason for a whitelist.
+
+    It is not secret-shaped, so a scan for credential-looking names would pass
+    it, while an unauthenticated route would start reporting which environment
+    the deployment believes it is.
+    """
+    patch(
+        release,
+        "backend/app/main.py",
+        'return {"revision": deployed_revision()}',
+        'return {"revision": deployed_revision(), "environment": settings.environment}',
+    )
+    assert any(
+        "environment=settings.environment" in failure for failure in failures(release)
+    )
+
+
+def test_a_version_route_that_takes_a_dependency_is_rejected(release: Path) -> None:
+    """A parameter is how FastAPI injection reaches a route that must not have it.
+
+    `/ready` opens PostgreSQL and Redis and 503s when either is down. The route
+    that says which build is running has to answer during that, because that is
+    when it is asked.
+    """
+    patch(
+        release,
+        "backend/app/main.py",
+        "def deployed_revision_endpoint() -> dict[str, str | None]:",
+        "def deployed_revision_endpoint(db=Depends(get_db)) -> dict[str, str | None]:",
+    )
+    assert any("takes parameters" in failure for failure in failures(release))

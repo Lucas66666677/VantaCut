@@ -28,6 +28,11 @@ on:
       - "backend/app/main.py"
       - "backend/app/services/storage_readiness.py"
       - "backend/tests/test_storage_readiness.py"
+      # Deployed-revision endpoint: the only thing the API serves that says
+      # which build is answering. Without it, a release probed after a deploy
+      # cannot be told apart from the image it was supposed to replace.
+      - "backend/app/core/revision.py"
+      - "backend/tests/test_deployed_revision_contract.py"
       - "backend/app/worker.py"
       - "backend/app/models/entities.py"
       - "backend/migrations/**"
@@ -471,3 +476,6 @@ jobs:
       - name: Run object-storage readiness tests
         working-directory: backend
         run: python -m pytest tests/test_storage_readiness.py -v
+      - name: Run deployed-revision contract tests
+        working-directory: backend
+        run: python -m pytest tests/test_deployed_revision_contract.py -v
