@@ -21,6 +21,12 @@ export function StudioLaunchpad() {
   // file in the browser while the surrounding copy promises background cloud
   // sync. It resolves to `undefined` until the first response and whenever
   // provisioning fails, which is the local-only state the bin already renders.
-  const { projectId } = useStudioProject();
-  return <AdaptiveEditorWorkspace timeline={timeline} projectId={projectId} />;
+  const { projectId, status } = useStudioProject();
+  if (status === "idle" || status === "loading") {
+    // Do not expose the media picker during this window. A user can select a
+    // file faster than a cold backend can provision the project; LocalMediaBin
+    // intentionally keeps such a file local and does not retry it later.
+    return <main aria-busy="true" className="grid min-h-screen place-items-center bg-[var(--lr-color-background)] text-sm text-[var(--lr-color-text-muted)]">正在準備雲端工作區…</main>;
+  }
+  return <AdaptiveEditorWorkspace timeline={timeline} projectId={projectId} projectStatus={status} />;
 }

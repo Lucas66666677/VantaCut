@@ -28,10 +28,10 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
  * `e2e/studio-project-provisioning.spec.ts` asserts what actually matters, that
  * a second project is never created.
  *
- * Failure is deliberately not fatal. `projectId` stays `undefined`, the media
- * bin keeps files locally exactly as it does today, and the visitor can still
- * edit -- losing cloud sync is worse than losing the session, so a provisioning
- * error must not become a blank screen.
+ * The studio holds back the media picker while this is loading, because a file
+ * selected before `projectId` arrives is kept local and is not retried later.
+ * Failure is still not fatal: `projectId` stays `undefined`, the editor opens
+ * in local-only mode, and an explicit warning replaces the cloud-sync promise.
  */
 export type StudioProject = {
   projectId?: string;

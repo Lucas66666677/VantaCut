@@ -64,6 +64,23 @@ test("a visitor with no project gets one created before uploading", async ({ pag
   expect(calls[0].method).toBe("GET");
 });
 
+test("the media picker waits until project provisioning finishes", async ({ page }) => {
+  await signedIn(page);
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  await page.route("**/api/v1/projects**", async (route: Route) => {
+    await held;
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([EXISTING_PROJECT]) });
+  });
+
+  await page.goto("/studio");
+  await expect(page.getByText("正在準備雲端工作區…")).toBeVisible();
+  await expect(page.getByRole("button", { name: "選取影片" })).toHaveCount(0);
+
+  release();
+  await expect(page.getByRole("button", { name: "選取影片" })).toBeVisible();
+});
+
 test("an existing project is reused rather than duplicated", async ({ page }) => {
   const calls: Recorded[] = [];
   await signedIn(page);
@@ -114,4 +131,6 @@ test("a provisioning failure leaves the editor usable rather than blank", async 
   await page.goto("/studio");
   await expect(page.getByLabel("描述剪輯需求")).toBeVisible();
   await expect(page.getByRole("button", { name: "套用工作區" })).toBeVisible();
+  await expect(page.getByRole("alert").filter({ hasText: "素材只會保存在此瀏覽器" })).toBeVisible();
+  await expect(page.getByText("拖入素材後可立即開始；素材只會保存在此瀏覽器。")).toBeVisible();
 });
