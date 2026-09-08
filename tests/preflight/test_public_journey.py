@@ -7,25 +7,24 @@ timeline that belongs to a project, and a download URL is authorised through
 `job.project.owner_id`. So the journey has a precondition nothing else tests:
 **a registered user must be able to obtain a project.**
 
-They cannot. Across the 195 routes in `backend/app/api/v1`, 120 of them POST,
-none creates a `Project`. The single construction site in the whole backend is
-a Celery task behind the headless Platform API, whose keys are issued only to a
-caller holding `X-Platform-Admin-Token`. The repository's own QA fixture
-(`tests/qa/create_render_fixture.py`) does not use the API at all -- it opens a
-`SessionLocal` and inserts the row directly, which is the clearest evidence
-that the gap is real rather than a naming accident.
+For a while they could not. Across the 195 routes in `backend/app/api/v1`, 120
+of them POST, none created a `Project`: the only construction site in the whole
+backend was a Celery task behind the headless Platform API, whose keys are
+issued only to a caller holding `X-Platform-Admin-Token`. Two checks here were
+`xfail(strict=True)` while that was true, so they would fail the moment it
+stopped being true and ask to be un-marked.
 
-The checks below are static: they parse the route modules and read the frontend
-entry point. No database, no network, no credential, no running service -- so
-they belong in the preflight suite and run on every pull request.
+`POST /api/v1/projects` closed it, and the markers came off with it. What these
+checks now hold is the shape of the fix rather than the shape of the gap: the
+precondition still exists, the route that satisfies it is authenticated and
+scoped to its caller, and the studio actually passes an id to the media bin.
+The failure they are written against is a regression that silently returns the
+journey to local-only -- which is exactly how it looked before, since nothing
+errored then either.
 
-## Why two of them are `xfail(strict=True)`
-
-Those two assert the behaviour the product needs, and fail today. Marked strict
-so they stay quiet while the gap is open and fail loudly the moment it closes --
-"unexpected success" is the signal to delete the marker, not to relax the test.
-A test that asserted the *current* broken state instead would go green and then
-quietly defend the bug against being fixed.
+The checks are static: they parse the route modules and read the frontend entry
+point. No database, no network, no credential, no running service -- so they
+belong in the preflight suite and run on every pull request.
 """
 
 from __future__ import annotations
@@ -34,14 +33,11 @@ import ast
 import re
 from pathlib import Path
 
-import pytest
-
 ROOT = Path(__file__).resolve().parents[2]
 API_DIR = ROOT / "backend" / "app" / "api" / "v1"
 BACKEND_APP = ROOT / "backend" / "app"
 PLATFORM_MODULE = API_DIR / "platform.py"
 MEDIA_MODULE = API_DIR / "media.py"
-QA_FIXTURE = ROOT / "tests" / "qa" / "create_render_fixture.py"
 STUDIO_LAUNCHPAD = ROOT / "frontend" / "features" / "onboarding" / "studio-launchpad.tsx"
 MEDIA_BIN = ROOT / "frontend" / "features" / "media" / "local-media-bin.tsx"
 WORKSPACE = ROOT / "frontend" / "features" / "workspace" / "adaptive-editor-workspace.tsx"
@@ -129,18 +125,11 @@ def test_uploading_requires_a_project_that_already_exists() -> None:
     assert upload_paths, "no upload entry point calls _create_uploading_asset any more"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "No HTTP route creates a Project, so a registered user cannot start the "
-        "advertised journey. Delete this marker with the route that fixes it."
-    ),
-)
 def test_a_registered_user_can_create_a_project() -> None:
-    """The missing leg. Nothing in the public API creates a project.
+    """The leg that was missing. A POST route must produce the object.
 
-    This is the blocker: 120 POST routes, none of which produces the one object
-    every later leg requires.
+    Written against the route surface rather than a path literal so renaming
+    the endpoint is allowed and deleting the capability is not.
     """
 
     creating = [
@@ -151,37 +140,83 @@ def test_a_registered_user_can_create_a_project() -> None:
     assert creating, "no POST route in backend/app/api/v1 constructs a Project"
 
 
-def test_the_only_project_creation_path_is_admin_gated() -> None:
-    """Pins *why* the check above fails, so the diagnosis cannot drift silently.
+def test_the_creation_route_is_authenticated_and_owner_scoped() -> None:
+    """A new write surface that mints an upload target has two ways to be wrong.
 
-    If a second construction site appears, this fails and the reason recorded
-    above has to be re-derived rather than assumed still true.
+    It could create projects for anonymous callers, or take the owner from the
+    request body -- which this codebase still does elsewhere, so it is a live
+    habit and not a hypothetical (see the SPOOFABLE_USER_ID route map). Either
+    would hand a stranger an upload path into someone else's storage, which is
+    worse than the gap this route was added to close.
     """
 
-    sites = _project_construction_sites()
-    assert sites == ["backend/app/tasks/platform_tasks.py:82"], (
-        f"Project is now constructed at {sites}; re-check whether a user-reachable "
-        f"path exists before trusting the blocker above"
-    )
+    creators = [
+        node
+        for method, _path, node in _all_route_handlers()
+        if method == "POST" and _constructs_a_project(node)
+    ]
+    assert creators, "no creation route to check"
 
-    # And the keys that reach that task are issued only to an admin caller.
+    for node in creators:
+        source = ast.unparse(node)
+        with_subtest = f"{node.name}: "
+        assert "get_current_user" in source, (
+            with_subtest + "the creation route does not require an authenticated caller"
+        )
+        assert "owner_id=current_user.id" in source, (
+            with_subtest + "the owner is not taken from the verified session"
+        )
+        assert "owner_id=payload" not in source and "owner_id=request" not in source, (
+            with_subtest + "the owner is being read from the request"
+        )
+
+
+def test_the_listing_route_filters_on_the_caller() -> None:
+    """Listing is how the studio avoids minting a workspace per page load.
+
+    Filtering in the query rather than after the fact is what keeps another
+    person's project invisible instead of merely refused.
+    """
+
+    listings = [
+        node
+        for method, path, node in _all_route_handlers()
+        if method == "GET" and path in {"", "/"} and "Project" in ast.unparse(node)
+    ]
+    assert listings, "no project listing route found"
+    for node in listings:
+        source = ast.unparse(node)
+        assert "get_current_user" in source
+        assert "Project.owner_id == current_user.id" in source
+
+
+def test_the_admin_path_is_still_admin_gated() -> None:
+    """The pre-existing Platform API route must not have been loosened.
+
+    Its keys are the one way to create a project on someone else's behalf, and
+    adding a user-facing route is no reason to relax that.
+    """
+
     platform = PLATFORM_MODULE.read_text(encoding="utf-8")
     issuing = platform.split('@router.post("/api-keys"', 1)[1].split("@router.")[0]
     assert "require_platform_management_token" in issuing
     assert "X-Platform-Admin-Token" in platform
 
 
-def test_the_repositorys_own_fixture_bypasses_the_api_to_get_a_project() -> None:
-    """Corroboration from the project's own tooling.
+def test_every_project_construction_site_is_accounted_for() -> None:
+    """A new construction site is a new way to own a project. Name them all.
 
-    The QA render fixture does not call the API to create a project; it opens a
-    database session and inserts the row. Tooling routing around an endpoint is
-    good evidence the endpoint is missing rather than merely differently named.
+    Not a style rule: each entry here is a path by which a `Project` row comes
+    into existence, and an unreviewed fourth one is exactly how an
+    unauthenticated or mis-scoped creation path would arrive.
     """
 
-    fixture = QA_FIXTURE.read_text(encoding="utf-8")
-    assert "SessionLocal" in fixture
-    assert re.search(r"Project\(owner_id=", fixture)
+    assert set(_project_construction_sites()) == {
+        # The headless Platform API, behind X-Platform-Admin-Token.
+        "backend/app/tasks/platform_tasks.py:82",
+        # The user-facing route this journey depends on.
+        "backend/app/api/v1/projects.py:57",
+    }, f"unreviewed Project construction sites: {_project_construction_sites()}"
 
 
 # --------------------------------------------------------------------------- #
@@ -199,20 +234,13 @@ def test_the_media_bin_only_uploads_when_it_is_given_a_project() -> None:
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "The studio entry renders the workspace with no project id, so the media "
-        "bin can never upload -- while the UI promises background cloud sync."
-    ),
-)
 def test_the_studio_entry_supplies_a_project_to_the_media_bin() -> None:
-    """The UI advertises a sync that cannot happen.
+    """The browser half of the fix, and the half that fails silently.
 
-    `LocalMediaBin` shows 「雲端同步會在背景完成」 -- cloud sync completes in the
-    background -- and marks every file `local` when it has no project id.
-    `StudioLaunchpad` renders the workspace without one, so that promise is
-    unkeepable for every visitor, not merely unimplemented.
+    `LocalMediaBin` marks every file `local` when it has no project id, and the
+    workspace shows 「雲端同步會在背景完成」 -- cloud sync completes in the
+    background. Dropping the prop again would restore that mismatch without
+    erroring anywhere, which is precisely how it went unnoticed the first time.
     """
 
     assert "雲端同步會在背景完成" in WORKSPACE.read_text(encoding="utf-8"), (
