@@ -33,6 +33,13 @@ on:
       # cannot be told apart from the image it was supposed to replace.
       - "backend/app/core/revision.py"
       - "backend/tests/test_deployed_revision_contract.py"
+      # Project creation: the route every upload depends on, and the first
+      # authenticated write surface added since the auth foundation landed.
+      # Its ownership tests need the Postgres service, so they belong here
+      # rather than in the import-only preflight suite.
+      - "backend/app/api/v1/projects.py"
+      - "backend/app/schemas/project.py"
+      - "backend/tests/test_project_provisioning.py"
       - "backend/app/worker.py"
       - "backend/app/models/entities.py"
       - "backend/migrations/**"
@@ -479,3 +486,6 @@ jobs:
       - name: Run deployed-revision contract tests
         working-directory: backend
         run: python -m pytest tests/test_deployed_revision_contract.py -v
+      - name: Run project provisioning ownership tests
+        working-directory: backend
+        run: python -m pytest tests/test_project_provisioning.py -v
