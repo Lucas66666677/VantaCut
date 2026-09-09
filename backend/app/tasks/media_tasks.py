@@ -1,7 +1,4 @@
-import json
-import subprocess
 import tempfile
-from fractions import Fraction
 from pathlib import Path
 from uuid import UUID
 
@@ -9,67 +6,13 @@ from app.db.session import SessionLocal
 from app.core.progress import publish_project_status
 from app.models.entities import MediaAsset, MediaStatus
 from app.services.storage import download_object, upload_object
+from app.services.media_preprocessing import (
+    MediaProcessingError,
+    extract_audio,
+    probe as _probe,
+    run as _run,
+)
 from app.worker import celery_app
-
-
-FFMPEG_TIMEOUT_SECONDS = 15 * 60
-
-
-class MediaProcessingError(RuntimeError):
-    pass
-
-
-def _run(command: list[str], timeout: int = FFMPEG_TIMEOUT_SECONDS) -> subprocess.CompletedProcess[str]:
-    try:
-        result = subprocess.run(
-            command,
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
-        return result
-    except subprocess.TimeoutExpired as exc:
-        raise MediaProcessingError(f"Command timed out after {timeout}s: {command[0]}") from exc
-    except subprocess.CalledProcessError as exc:
-        detail = (exc.stderr or "").strip()[-2000:]
-        raise MediaProcessingError(f"FFmpeg command failed: {detail}") from exc
-    except OSError as exc:
-        raise MediaProcessingError("ffmpeg/ffprobe is not installed or not executable") from exc
-
-
-def _probe(input_path: Path) -> dict[str, object]:
-    result = _run(
-        [
-            "ffprobe",
-            "-v",
-            "error",
-            "-show_entries",
-            "format=duration:stream=codec_name,width,height,avg_frame_rate",
-            "-select_streams",
-            "v:0",
-            "-of",
-            "json",
-            str(input_path),
-        ],
-        timeout=120,
-    )
-    payload = json.loads(result.stdout)
-    stream = (payload.get("streams") or [{}])[0]
-    format_data = payload.get("format") or {}
-    duration = float(format_data.get("duration") or 0)
-    raw_fps = str(stream.get("avg_frame_rate") or "0/0")
-    try:
-        fps = float(Fraction(raw_fps))
-    except (ValueError, ZeroDivisionError):
-        fps = 0.0
-    return {
-        "duration": duration,
-        "width": int(stream.get("width") or 0),
-        "height": int(stream.get("height") or 0),
-        "fps": fps,
-        "video_codec": stream.get("codec_name"),
-    }
 
 
 @celery_app.task(name="media.process_new_media")
@@ -103,10 +46,7 @@ def process_new_media(asset_id: str) -> dict[str, object]:
                 "-frames:v", "1", "-q:v", "2", str(thumbnail),
             ])
             publish_project_status(str(asset.project_id), progress=50, stage="media_audio", message="正在抽取音訊")
-            _run([
-                "ffmpeg", "-y", "-i", str(original), "-vn", "-ac", "1",
-                "-ar", "16000", "-c:a", "pcm_s16le", str(audio),
-            ])
+            audio_created = extract_audio(original, audio, has_audio=bool(metadata["has_audio"]))
             publish_project_status(str(asset.project_id), progress=70, stage="media_proxy", message="正在生成預覽代理檔")
             _run([
                 "ffmpeg", "-y", "-i", str(original),
@@ -117,11 +57,12 @@ def process_new_media(asset_id: str) -> dict[str, object]:
 
             base = f"projects/{asset.project_id}/derived/{asset.id}"
             thumbnail_key = f"{base}/thumbnail.jpg"
-            audio_key = f"{base}/audio-16khz.wav"
+            audio_key = f"{base}/audio-16khz.wav" if audio_created else None
             proxy_key = f"{base}/proxy-720p.mp4"
             publish_project_status(str(asset.project_id), progress=90, stage="media_uploading", message="正在上傳處理結果")
             upload_object(thumbnail_key, str(thumbnail), "image/jpeg")
-            upload_object(audio_key, str(audio), "audio/wav")
+            if audio_key is not None:
+                upload_object(audio_key, str(audio), "audio/wav")
             upload_object(proxy_key, str(proxy), "video/mp4")
 
             asset.duration_seconds = metadata["duration"]
