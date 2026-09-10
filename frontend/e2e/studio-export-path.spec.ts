@@ -37,6 +37,9 @@ import { expect, test, type Page, type Route } from "@playwright/test";
  *  * **blocked** -- out of credits is a 402 with a message worth showing.
  *  * **cold storage** -- a started restore and a queued render both answer
  *    202; only the body tells them apart.
+ *  * **recovery** -- a render costs a credit and can outlast the page. The
+ *    ids must survive a reload, resuming must never submit a second render,
+ *    and a stalled poll must offer a way forward rather than a dead end.
  */
 
 const TOKEN_STORAGE_KEY = "vantacut_access_token";
@@ -274,4 +277,186 @@ test("a cold-storage restore is told apart from a queued render", async ({ page 
   await expect(page.getByText(/導出失敗/)).toHaveCount(0);
   await expect(page.getByText(/剩餘點數/)).toHaveCount(0);
   await expect(page.getByRole("link", { name: "下載影片" })).toHaveCount(0);
+});
+
+
+test("a reload resumes the running job without submitting another render", async ({ page }) => {
+  // The blocker review found: the panel told users to refresh while the
+  // asset, timeline and render-job ids lived only in React state, so
+  // refreshing destroyed a render the user had already paid a credit for.
+  let renderCalls = 0;
+  let downloadPolls = 0;
+
+  await installBackend(page, {
+    status: MEDIA_READY,
+    render: (route) => {
+      renderCalls += 1;
+      return json(route, 202, { render_job_id: RENDER_JOB_ID, task_id: "t", subscription_tier: "free", render_credits_remaining: 4, watermark_applied: true });
+    },
+    download: (route) => {
+      downloadPolls += 1;
+      // Never finishes before the reload, so the reload has something to resume.
+      return downloadPolls <= 2
+        ? json(route, 404, { detail: "Completed render not found" })
+        : json(route, 200, { download_url: `${STORAGE_HOST}/render.mp4` });
+    },
+  });
+
+  await page.goto("/studio");
+  await addAVideo(page);
+  await page.getByRole("button", { name: "建立時間軸" }).click();
+  await page.getByRole("button", { name: "導出影片" }).click();
+  await page.getByRole("button", { name: "確認並導出" }).click();
+  await expect(page.getByText(/方案 免費／剩餘點數 4/)).toBeVisible();
+  expect(renderCalls).toBe(1);
+
+  await page.reload();
+
+  // Straight back into the queued state, with the credit outcome intact --
+  // and, crucially, without a second render being submitted.
+  await expect(page.getByText(/方案 免費／剩餘點數 4/)).toBeVisible();
+  expect(renderCalls).toBe(1);
+
+  await expect(page.getByRole("link", { name: "下載影片" })).toBeVisible({ timeout: 20_000 });
+  expect(renderCalls).toBe(1);
+});
+
+test("a transient polling failure offers a free retry that resumes the same job", async ({ page }) => {
+  let renderCalls = 0;
+  let downloadPolls = 0;
+
+  await installBackend(page, {
+    status: MEDIA_READY,
+    render: (route) => {
+      renderCalls += 1;
+      return json(route, 202, { render_job_id: RENDER_JOB_ID, task_id: "t", subscription_tier: "free", render_credits_remaining: 4, watermark_applied: true });
+    },
+    download: (route) => {
+      downloadPolls += 1;
+      // A 503 is not "no render": it is the query failing, and the panel must
+      // not present that as a lost export.
+      if (downloadPolls === 1) return json(route, 503, { detail: "temporarily unavailable" });
+      return json(route, 200, { download_url: `${STORAGE_HOST}/render.mp4` });
+    },
+  });
+
+  await page.goto("/studio");
+  await addAVideo(page);
+  await page.getByRole("button", { name: "建立時間軸" }).click();
+  await page.getByRole("button", { name: "導出影片" }).click();
+  await page.getByRole("button", { name: "確認並導出" }).click();
+
+  const retry = page.getByRole("button", { name: "重新查詢導出狀態" });
+  await expect(retry).toBeVisible();
+  // The receipt stays on screen through the failure: the credit was spent and
+  // saying otherwise would be a lie.
+  await expect(page.getByText(/方案 免費／剩餘點數 4/)).toBeVisible();
+  await expect(page.getByText(/這次查詢不會重新送出渲染/)).toBeVisible();
+
+  await retry.click();
+
+  await expect(page.getByRole("link", { name: "下載影片" })).toBeVisible({ timeout: 20_000 });
+  expect(renderCalls).toBe(1);
+});
+
+test("a cold-storage restore offers a retry that goes back through the confirmation", async ({ page }) => {
+  // Retrying after hydration does spend another credit, so unlike a poll
+  // retry it must be confirmed again rather than fired straight off.
+  let renderCalls = 0;
+  await installBackend(page, {
+    status: MEDIA_READY,
+    render: (route) => {
+      renderCalls += 1;
+      return json(route, 202, { detail: { code: "cold_storage_hydration_started", hydration_job_id: "hj-1", message: "正在從冷庫調回高畫質素材，預計需要 12 小時", estimated_ready_at: null } });
+    },
+  });
+
+  await page.goto("/studio");
+  await addAVideo(page);
+  await page.getByRole("button", { name: "建立時間軸" }).click();
+  await page.getByRole("button", { name: "導出影片" }).click();
+  await page.getByRole("button", { name: "確認並導出" }).click();
+  await expect(page.getByText(/正在從冷庫調回高畫質素材/)).toBeVisible();
+  expect(renderCalls).toBe(1);
+
+  await page.getByRole("button", { name: "再試一次導出" }).click();
+
+  // The confirmation, not another render: still one call so far.
+  await expect(page.getByRole("group", { name: "確認導出" })).toBeVisible();
+  expect(renderCalls).toBe(1);
+
+  await page.getByRole("button", { name: "確認並導出" }).click();
+  await expect.poll(() => renderCalls).toBe(2);
+});
+
+test("a reload before any render resumes at the timeline rather than re-uploading", async ({ page }) => {
+  let timelineCalls = 0;
+  await installBackend(page, {
+    status: MEDIA_READY,
+    timelines: (route) => { timelineCalls += 1; return json(route, 201, TIMELINE); },
+  });
+
+  await page.goto("/studio");
+  await addAVideo(page);
+  await page.getByRole("button", { name: "建立時間軸" }).click();
+  await expect(page.getByText("時間軸已就緒。")).toBeVisible();
+  expect(timelineCalls).toBe(1);
+
+  await page.reload();
+
+  await expect(page.getByRole("button", { name: "導出影片" })).toBeVisible();
+  expect(timelineCalls).toBe(1);
+});
+
+
+test("another account on the same browser does not inherit the job", async ({ page }) => {
+  // The record is keyed by user id. Without that, signing in as someone else
+  // on a shared browser would show them a stranger's render job -- which the
+  // backend would refuse to serve (it checks job.project.owner_id), but which
+  // should never have been offered.
+  let currentUser = TEST_USER;
+  let renderCalls = 0;
+
+  await page.addInitScript(
+    ([key, token]) => window.sessionStorage.setItem(key, token),
+    [TOKEN_STORAGE_KEY, TEST_TOKEN] as const,
+  );
+  await page.route("**/api/v1/**", async (route: Route) => {
+    const { pathname } = new URL(route.request().url());
+    if (pathname === "/api/v1/auth/me") return json(route, 200, currentUser);
+    if (pathname === "/api/v1/projects") return json(route, 200, [PROJECT]);
+    if (pathname.endsWith("/status")) {
+      return route.fulfill({ status: 200, headers: { "content-type": "text/event-stream" }, body: MEDIA_READY });
+    }
+    if (pathname.endsWith("/timelines")) return json(route, 201, TIMELINE);
+    if (pathname === "/api/v1/media/multipart-upload/initiate") return json(route, 201, { asset_id: ASSET_ID, storage_key: "k", upload_id: "u", part_size_bytes: 16 * 1024 * 1024, expires_in: 900 });
+    if (pathname === "/api/v1/media/multipart-upload/part-url") return json(route, 200, { upload_url: `${STORAGE_HOST}/part-1` });
+    if (pathname === "/api/v1/media/multipart-upload/complete") return json(route, 200, { id: ASSET_ID, status: "processing" });
+    if (pathname.endsWith("/download-url")) return json(route, 404, { detail: "Completed render not found" });
+    if (pathname.endsWith("/render")) {
+      renderCalls += 1;
+      return json(route, 202, { render_job_id: RENDER_JOB_ID, task_id: "t", subscription_tier: "free", render_credits_remaining: 4, watermark_applied: true });
+    }
+    return json(route, 200, {});
+  });
+  const cors = { "access-control-allow-origin": "*", "access-control-allow-methods": "PUT, GET, OPTIONS", "access-control-allow-headers": "*", "access-control-expose-headers": "etag" };
+  await page.route(`${STORAGE_HOST}/**`, (route: Route) =>
+    route.request().method() === "OPTIONS"
+      ? route.fulfill({ status: 204, headers: cors, body: "" })
+      : route.fulfill({ status: 200, headers: { ...cors, etag: '"etag-1"' }, body: "" }));
+
+  await page.goto("/studio");
+  await addAVideo(page);
+  await page.getByRole("button", { name: "建立時間軸" }).click();
+  await page.getByRole("button", { name: "導出影片" }).click();
+  await page.getByRole("button", { name: "確認並導出" }).click();
+  await expect(page.getByText(/方案 免費／剩餘點數 4/)).toBeVisible();
+
+  // Same browser, same tab, different account.
+  currentUser = { ...TEST_USER, id: "99999999-9999-9999-9999-999999999999", email: "other@example.com" };
+  await page.reload();
+
+  await expect(page.getByText("先加入一段影片，導出選項就會出現。")).toBeVisible();
+  await expect(page.getByText(/剩餘點數 4/)).toHaveCount(0);
+  expect(renderCalls).toBe(1);
 });
