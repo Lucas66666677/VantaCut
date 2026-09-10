@@ -149,6 +149,19 @@ export function StudioExportPanel({ projectId, assetId, uploadStartedAt }: Studi
   /** The upload-start value already acted on. Initialised to the mount-time
    *  prop so a remount does not replay an upload that began long ago. */
   const handledUploadStart = useRef<number | undefined>(uploadStartedAt);
+  /**
+   * Which asset the panel is currently about. Bumped whenever that changes.
+   *
+   * Every request started here captures the token first and drops its own
+   * response if the token has moved on. Without it, a create or render answer
+   * for the previous asset lands after the switch and re-points the panel at
+   * it -- the same class of defect as the phase not resetting, arriving a
+   * network round trip later.
+   */
+  const selection = useRef(0);
+  /** Set when a new upload supersedes an export that had already been paid
+   *  for, so the loss is stated rather than silent. */
+  const [supersededRender, setSupersededRender] = useState(false);
 
   // Merges rather than replaces. Remounting the panel (applying a workspace
   // intent and coming back) re-runs the effects below with the same props; a
@@ -204,8 +217,19 @@ export function StudioExportPanel({ projectId, assetId, uploadStartedAt }: Studi
     if (!uploadStartedAt || handledUploadStart.current === uploadStartedAt) return;
     handledUploadStart.current = uploadStartedAt;
     setConfirming(false);
-    // A new upload supersedes anything built on the previous one.
+    // A new upload supersedes anything built on the previous one, so the
+    // token moves and every in-flight response for the old asset becomes
+    // stale.
+    selection.current += 1;
+    // Reset what is on screen, not only what is tracked. Review found this
+    // missing: `tracking` was reset while the phase was left alone, and the
+    // tracking-to-phase effect deliberately refuses to touch the timeline,
+    // queued and downloadable phases -- so uploading B after building A left
+    // the export controls still pointing at A.
+    const previous = readExportSession(userId, projectId);
+    setSupersededRender(Boolean(previous?.renderJobId));
     clearExportSession(userId, projectId);
+    setPhase({ kind: "media-processing", progress: 0, message: "正在處理素材" });
     setTracking({
       sinceKey: statusIdentity(latestStatus.current),
       readySeen: false,
@@ -322,21 +346,33 @@ export function StudioExportPanel({ projectId, assetId, uploadStartedAt }: Studi
   }
 
   const createTimeline = async (sourceAssetId: string) => {
+    const token = selection.current;
     setPhase({ kind: "creating" });
     try {
       const timeline = await createTimelineFromAsset(projectId, sourceAssetId);
+      // A different asset was chosen while this was in flight: this answer
+      // describes the previous one, and applying it would re-point the panel
+      // at an asset the user has moved on from.
+      if (selection.current !== token) return;
       remember({ assetId: sourceAssetId, timelineId: timeline.id });
       setPhase({ kind: "timeline", timelineId: timeline.id });
     } catch (error) {
+      if (selection.current !== token) return;
       setPhase({ kind: "error", message: error instanceof Error ? error.message : "無法建立時間軸" });
     }
   };
 
   const startRender = async (timelineId: string) => {
+    const token = selection.current;
     setConfirming(false);
     setPhase({ kind: "requesting", timelineId });
     try {
       const outcome: RenderOutcome = await requestRender(timelineId, resolution);
+      // The credit is already spent either way -- the request reached the
+      // backend. What must not happen is this answer overwriting the panel
+      // for a newer asset, which would also persist the old job id over the
+      // new selection's record.
+      if (selection.current !== token) return;
       if (outcome.kind === "queued") {
         const receipt: RenderReceipt = {
           renderJobId: outcome.renderJobId,
@@ -356,6 +392,7 @@ export function StudioExportPanel({ projectId, assetId, uploadStartedAt }: Studi
         setPhase({ kind: "error", message: outcome.message, timelineId });
       }
     } catch (error) {
+      if (selection.current !== token) return;
       setPhase({ kind: "error", message: error instanceof Error ? error.message : "導出請求失敗", timelineId });
     }
   };
@@ -364,6 +401,7 @@ export function StudioExportPanel({ projectId, assetId, uploadStartedAt }: Studi
   const resumePolling = (receipt: RenderReceipt) => setPhase({ kind: "queued", receipt });
 
   const startOver = () => {
+    selection.current += 1;
     clearExportSession(userId, projectId);
     setTracking(undefined);
     setConfirming(false);
@@ -390,6 +428,12 @@ export function StudioExportPanel({ projectId, assetId, uploadStartedAt }: Studi
           </select>
         </label>
       </div>
+
+      {supersededRender && (
+        <p role="status" className="mt-3 text-xs text-[var(--lr-color-warning)]">
+          先前那次導出已被這個新素材取代，這個面板不再追蹤它；已扣除的點數不會退回。
+        </p>
+      )}
 
       <div className="mt-3 text-xs" data-testid="studio-export-state" data-restored={restored ? "1" : "0"}>
         {phase.kind === "waiting-for-media" && (

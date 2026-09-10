@@ -47,6 +47,8 @@ const TEST_TOKEN = "studio-export-token";
 const TEST_USER = { id: "22222222-2222-2222-2222-222222222222", email: "studio@example.com", display_name: null, is_active: true };
 const PROJECT = { id: "33333333-3333-3333-3333-333333333333", name: "既有專案", description: null, lifecycle_state: "active", created_at: "2026-09-01T00:00:00Z", updated_at: "2026-09-01T00:00:00Z" };
 const ASSET_ID = "55555555-5555-5555-5555-555555555555";
+/** The second upload in the A-then-B cases. */
+const ASSET_ID_B = "5b5b5b5b-5b5b-5b5b-5b5b-5b5b5b5b5b5b";
 const TIMELINE_ID = "66666666-6666-6666-6666-666666666666";
 const RENDER_JOB_ID = "77777777-7777-7777-7777-777777777777";
 const TIMELINE = { id: TIMELINE_ID, project_id: PROJECT.id, name: "第一版剪輯", version: 1, is_current: true, created_at: "2026-09-09T00:00:00Z", updated_at: "2026-09-09T00:00:00Z" };
@@ -66,6 +68,10 @@ function json(route: Route, status: number, body: unknown): Promise<void> {
 interface Backend {
   /** SSE body for the project status stream. */
   status: string;
+  /** Asset ids handed out per upload, in order. Defaults to one. */
+  assetIds?: string[];
+  /** Every `source_asset_id` the client asked to build a timeline from. */
+  timelineRequests?: string[];
   /**
    * When the stream delivers that body.
    *
@@ -108,6 +114,9 @@ async function installBackend(page: Page, backend: Backend): Promise<void> {
       : route.fulfill({ status: 200, headers: { ...cors, etag: '"etag-1"' }, body: "" }));
 
   let uploadBegan = backend.statusGate === "immediate";
+  const assetIds = backend.assetIds ?? [ASSET_ID];
+  let uploadIndex = -1;
+  const currentAsset = () => assetIds[Math.min(Math.max(uploadIndex, 0), assetIds.length - 1)];
 
   await page.route("**/api/v1/**", async (route: Route) => {
     const { pathname } = new URL(route.request().url());
@@ -121,22 +130,33 @@ async function installBackend(page: Page, backend: Backend): Promise<void> {
       return route.fulfill({
         status: 200,
         headers: { "content-type": "text/event-stream", "cache-control": "no-cache" },
-        body: backend.status,
+        // Stamped per upload, because each publish carries its own
+        // `updated_at` and the panel identifies events by it. Re-deliveries
+        // within one upload stay identical (the SSE client replays the last
+        // event, and that must not read as new); a second upload produces a
+        // genuinely different event, as a second `process_new_media` would.
+        body: backend.status.replace(
+          '"updated_at":"2026-09-09T00:00:00Z"',
+          `"updated_at":"2026-09-09T00:00:0${Math.max(uploadIndex, 0)}Z"`,
+        ),
       });
     }
     if (pathname.endsWith("/timelines")) {
+      const body = route.request().postDataJSON() as { source_asset_id?: string } | null;
+      if (body?.source_asset_id) backend.timelineRequests?.push(body.source_asset_id);
       if (backend.timelines) return backend.timelines(route);
       return json(route, 201, TIMELINE);
     }
     if (pathname === "/api/v1/media/multipart-upload/initiate") {
       uploadBegan = true;
-      return json(route, 201, { asset_id: ASSET_ID, storage_key: "k", upload_id: "u", part_size_bytes: 16 * 1024 * 1024, expires_in: 900 });
+      uploadIndex += 1;
+      return json(route, 201, { asset_id: currentAsset(), storage_key: "k", upload_id: "u", part_size_bytes: 16 * 1024 * 1024, expires_in: 900 });
     }
     if (pathname === "/api/v1/media/multipart-upload/part-url") {
       return json(route, 200, { upload_url: `${STORAGE_HOST}/part-1` });
     }
     if (pathname === "/api/v1/media/multipart-upload/complete") {
-      return json(route, 200, { id: ASSET_ID, status: "processing" });
+      return json(route, 200, { id: currentAsset(), status: "processing" });
     }
     if (pathname.endsWith("/download-url")) {
       if (backend.download) return backend.download(route);
@@ -671,4 +691,115 @@ test("leaving the welcome workspace and reloading still resumes the paid render"
   await expect(page.getByText(/方案 免費／剩餘點數 4/)).toBeVisible();
   await expect(page.getByRole("link", { name: "下載影片" })).toBeVisible({ timeout: 20_000 });
   expect(renderCalls).toBe(1);
+});
+
+
+test("uploading a second asset moves the export controls off the first", async ({ page }) => {
+  // Review found the switch half-done: upload-start reset `tracking` and
+  // cleared the stored session but never reset the phase, and the
+  // tracking-to-phase effect deliberately refuses to leave the timeline,
+  // queued and downloadable phases. So after building a timeline for A,
+  // choosing B left the export button still pointing at A -- while A's
+  // recovery record had already been erased underneath it.
+  const timelineRequests: string[] = [];
+  let renderCalls = 0;
+
+  await installBackend(page, {
+    status: MEDIA_READY,
+    assetIds: [ASSET_ID, ASSET_ID_B],
+    timelineRequests,
+    render: (route) => { renderCalls += 1; return json(route, 202, { render_job_id: RENDER_JOB_ID, task_id: "t", subscription_tier: "free", render_credits_remaining: 4, watermark_applied: true }); },
+  });
+
+  await page.goto("/studio");
+
+  // A: uploaded and built.
+  await addAVideo(page);
+  await page.getByRole("button", { name: "建立時間軸" }).click();
+  await expect(page.getByText("時間軸已就緒。")).toBeVisible();
+  expect(timelineRequests).toEqual([ASSET_ID]);
+
+  // B: a second, different file.
+  await addAVideo(page);
+
+  // The export controls must leave A immediately, not stay usable.
+  await expect(page.getByText("時間軸已就緒。")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "導出影片" })).toHaveCount(0);
+
+  // B then becomes ready on its own event and builds its own timeline.
+  await expect(page.getByRole("button", { name: "建立時間軸" })).toBeVisible();
+  await page.getByRole("button", { name: "建立時間軸" }).click();
+  await expect(page.getByText("時間軸已就緒。")).toBeVisible();
+
+  expect(timelineRequests).toEqual([ASSET_ID, ASSET_ID_B]);
+  // Switching assets must never start a render by itself.
+  expect(renderCalls).toBe(0);
+});
+
+test("a timeline response for the previous asset does not recapture the panel", async ({ page }) => {
+  // The same defect one round trip later: A's create is still in flight when
+  // B is chosen, and its answer must not re-point the panel at A.
+  const timelineRequests: string[] = [];
+  let releaseFirstTimeline = false;
+  let timelineCalls = 0;
+
+  await installBackend(page, {
+    status: MEDIA_READY,
+    assetIds: [ASSET_ID, ASSET_ID_B],
+    timelineRequests,
+    timelines: async (route) => {
+      timelineCalls += 1;
+      if (timelineCalls === 1) {
+        for (let attempt = 0; attempt < 300 && !releaseFirstTimeline; attempt += 1) {
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+        return json(route, 201, { ...TIMELINE, id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa" });
+      }
+      return json(route, 201, TIMELINE);
+    },
+  });
+
+  await page.goto("/studio");
+  await addAVideo(page);
+  await page.getByRole("button", { name: "建立時間軸" }).click();
+  await expect(page.getByRole("status").filter({ hasText: "正在建立時間軸" })).toBeVisible();
+
+  // Switch to B while A's create is still open.
+  await addAVideo(page);
+  await expect(page.getByRole("button", { name: "建立時間軸" })).toBeVisible();
+
+  // A's answer arrives late.
+  releaseFirstTimeline = true;
+  await page.waitForTimeout(1_000);
+
+  // It must be ignored: the panel is about B now, still waiting to be built.
+  await expect(page.getByText("時間軸已就緒。")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "建立時間軸" })).toBeVisible();
+
+  await page.getByRole("button", { name: "建立時間軸" }).click();
+  await expect(page.getByText("時間軸已就緒。")).toBeVisible();
+  expect(timelineRequests).toEqual([ASSET_ID, ASSET_ID_B]);
+});
+
+test("superseding a paid render says so rather than dropping it silently", async ({ page }) => {
+  // Switching assets erases the stored record, which is where a queued
+  // render's id lives. That is defensible -- one project, one slot -- but it
+  // must not be invisible: the credit is already spent.
+  await installBackend(page, {
+    status: MEDIA_READY,
+    assetIds: [ASSET_ID, ASSET_ID_B],
+    render: (route) => json(route, 202, { render_job_id: RENDER_JOB_ID, task_id: "t", subscription_tier: "free", render_credits_remaining: 4, watermark_applied: true }),
+  });
+
+  await page.goto("/studio");
+  await addAVideo(page);
+  await page.getByRole("button", { name: "建立時間軸" }).click();
+  await page.getByRole("button", { name: "導出影片" }).click();
+  await page.getByRole("button", { name: "確認並導出" }).click();
+  await expect(page.getByText(/方案 免費／剩餘點數 4/)).toBeVisible();
+
+  await addAVideo(page);
+
+  await expect(page.getByText(/先前那次導出已被這個新素材取代/)).toBeVisible();
+  await expect(page.getByText(/剩餘點數 4/)).toHaveCount(0);
 });
