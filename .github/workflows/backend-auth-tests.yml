@@ -40,6 +40,17 @@ on:
       - "backend/app/api/v1/projects.py"
       - "backend/app/schemas/project.py"
       - "backend/tests/test_project_provisioning.py"
+      # Timeline creation: the leg after upload. Every export route is keyed
+      # by a timeline id and nothing in app/api/v1 produced one, so an
+      # uploaded asset could not be rendered. Ownership tests need the
+      # Postgres service; the pure builder tests do not, but run here too so
+      # both halves move together.
+      - "backend/app/api/v1/project_timelines.py"
+      - "backend/app/schemas/project_timeline.py"
+      - "backend/app/services/timeline_bootstrap.py"
+      - "backend/tests/test_project_timeline_provisioning.py"
+      - "backend/tests/test_project_timeline_concurrency.py"
+      - "backend/tests/test_timeline_bootstrap.py"
       - "backend/app/worker.py"
       - "backend/app/models/entities.py"
       - "backend/migrations/**"
@@ -489,3 +500,12 @@ jobs:
       - name: Run project provisioning ownership tests
         working-directory: backend
         run: python -m pytest tests/test_project_provisioning.py -v
+      - name: Run timeline bootstrap unit tests
+        working-directory: backend
+        run: python -m pytest tests/test_timeline_bootstrap.py -v
+      - name: Run project timeline provisioning ownership tests
+        working-directory: backend
+        run: python -m pytest tests/test_project_timeline_provisioning.py -v
+      - name: Run project timeline concurrency regression (real PostgreSQL)
+        working-directory: backend
+        run: python -m pytest tests/test_project_timeline_concurrency.py -v

@@ -21,6 +21,7 @@ import { expect, test } from "@playwright/test";
  *   VANTACUT_PUBLIC_ACCESS_TOKEN   a bearer token for an existing account
  *   VANTACUT_PUBLIC_PROJECT_ID     optional: reuse a project instead of creating one
  *   VANTACUT_PUBLIC_ALLOW_UPLOAD   must be exactly "1" to write anything
+ *   VANTACUT_PUBLIC_MEDIA_ASSET_ID optional: a READY asset to cut a timeline from
  *
  * ## The project is now created by the product
  *
@@ -34,6 +35,24 @@ import { expect, test } from "@playwright/test";
  *
  * The variable survives as an override, for an operator who would rather reuse
  * one workspace than leave a probe project behind on each run.
+ *
+ * ## The timeline leg, and why it needs a real asset
+ *
+ * Upload worked and then stopped: every export route is keyed by a timeline
+ * id, and no route in `app/api/v1` produced one. `POST /projects/{id}/timelines`
+ * closes that, and the phase below drives it.
+ *
+ * It cannot run on the probe this file uploads. That upload is 64KB of zeros --
+ * enough to prove the storage round trip, not a file FFmpeg can decode -- so
+ * `process_new_media` never measures a duration and the asset never reaches
+ * READY. Creating a timeline from it would be refused, correctly. So this phase
+ * asks the operator for an asset that is already READY in their own account
+ * rather than uploading a real video from here, which would mean shipping a
+ * media fixture and spending the deployment's transcode time on every run.
+ *
+ * It stops at creating the timeline. Requesting the render is deliberately not
+ * done here: it spends a render credit and occupies a worker, and the leg this
+ * was missing is the one that produces the id, not the one that consumes it.
  */
 
 const BASE_URL = process.env.VANTACUT_PUBLIC_BASE_URL;
@@ -41,6 +60,7 @@ const API_URL = process.env.VANTACUT_PUBLIC_API_URL;
 const ACCESS_TOKEN = process.env.VANTACUT_PUBLIC_ACCESS_TOKEN;
 const PROJECT_ID = process.env.VANTACUT_PUBLIC_PROJECT_ID;
 const ALLOW_UPLOAD = process.env.VANTACUT_PUBLIC_ALLOW_UPLOAD === "1";
+const MEDIA_ASSET_ID = process.env.VANTACUT_PUBLIC_MEDIA_ASSET_ID;
 
 const TOKEN_STORAGE_KEY = "vantacut_access_token";
 const COMMIT_SHA = /^[0-9a-f]{7,40}$/;
@@ -148,6 +168,35 @@ test.describe("public journey", () => {
     expect(complete.status(), await complete.text()).toBe(200);
     const asset = await complete.json() as { status: string };
     expect(asset.status, "the asset never left UPLOADING").not.toBe("uploading");
+  });
+
+  test("an uploaded asset becomes a timeline an export can be requested on", async ({ request }) => {
+    test.skip(!ALLOW_UPLOAD, "writes are opt-in: set VANTACUT_PUBLIC_ALLOW_UPLOAD=1");
+    test.skip(
+      !MEDIA_ASSET_ID,
+      "set VANTACUT_PUBLIC_MEDIA_ASSET_ID to a READY asset owned by this account",
+    );
+    test.skip(!PROJECT_ID, "set VANTACUT_PUBLIC_PROJECT_ID to the project that asset belongs to");
+
+    const authorised = { Authorization: `Bearer ${ACCESS_TOKEN}` };
+
+    const created = await request.post(`${API_URL}/api/v1/projects/${PROJECT_ID}/timelines`, {
+      headers: authorised,
+      data: { source_asset_id: MEDIA_ASSET_ID, name: "public journey first cut" },
+    });
+    expect(created.status(), await created.text()).toBe(201);
+    const timeline = await created.json() as { id: string; is_current: boolean; version: number };
+    expect(timeline.id).toBeTruthy();
+    expect(timeline.is_current, "the new cut should be the project's current timeline").toBe(true);
+
+    // Listed through the product, not read back from the create response: an id
+    // that cannot be found again is not one a returning visitor could use.
+    const listed = await request.get(`${API_URL}/api/v1/projects/${PROJECT_ID}/timelines`, {
+      headers: authorised,
+    });
+    expect(listed.status(), await listed.text()).toBe(200);
+    const timelines = await listed.json() as Array<{ id: string }>;
+    expect(timelines.map((item) => item.id)).toContain(timeline.id);
   });
 
   test("a completed render is downloadable by its owner", async ({ request }) => {

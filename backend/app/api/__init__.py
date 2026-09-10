@@ -7,6 +7,7 @@ from app.api.v1.analysis import router as analysis_router
 from app.api.v1.subtitles import router as subtitles_router
 from app.api.v1.project_status import router as project_status_router
 from app.api.v1.projects import router as projects_router
+from app.api.v1.project_timelines import router as project_timelines_router
 from app.api.v1.audio_enhancement import router as audio_enhancement_router
 from app.api.v1.renders import router as renders_router
 from app.api.v1.collaboration import router as collaboration_router
@@ -81,6 +82,7 @@ from app.api.v1.wireless_cameras import mobile_router as wireless_camera_mobile_
 api_router = APIRouter(prefix="/api/v1")
 api_router.include_router(auth_router)
 api_router.include_router(projects_router)
+api_router.include_router(project_timelines_router)
 api_router.include_router(media_router)
 api_router.include_router(ai_router)
 api_router.include_router(analysis_router)

@@ -22,6 +22,19 @@ The failure they are written against is a regression that silently returns the
 journey to local-only -- which is exactly how it looked before, since nothing
 errored then either.
 
+## The same gap, one leg later
+
+Upload then worked and stopped. Every export route is keyed by a timeline id --
+`POST /timelines/{id}/render`, the omnichannel matrix, the download URL -- and
+no route in `backend/app/api/v1` produced one either. Every `Timeline(...)` in
+the backend was inside a Celery task or an AI pipeline (auto-director,
+one-click, beat sync, auto-narration, long-to-shorts, camera ingest), or cloned
+a timeline that already existed. There was no first one to clone, so an
+uploaded asset could not be exported.
+
+`POST /api/v1/projects/{project_id}/timelines` closes that, and the checks below
+hold the same three properties for it.
+
 The checks are static: they parse the route modules and read the frontend entry
 point. No database, no network, no credential, no running service -- so they
 belong in the preflight suite and run on every pull request.
@@ -76,6 +89,17 @@ def _constructs_a_project(node: ast.AST) -> bool:
         isinstance(inner, ast.Call)
         and isinstance(inner.func, ast.Name)
         and inner.func.id == "Project"
+        for inner in ast.walk(node)
+    )
+
+
+def _constructs_a_timeline(node: ast.AST) -> bool:
+    """Whether a function body instantiates the `Timeline` ORM model."""
+
+    return any(
+        isinstance(inner, ast.Call)
+        and isinstance(inner.func, ast.Name)
+        and inner.func.id == "Timeline"
         for inner in ast.walk(node)
     )
 
@@ -253,3 +277,127 @@ def test_the_studio_entry_supplies_a_project_to_the_media_bin() -> None:
         "StudioLaunchpad renders AdaptiveEditorWorkspace without a projectId, so "
         "LocalMediaBin never calls uploadToProject"
     )
+
+
+# --------------------------------------------------------------------------- #
+# The leg after upload
+# --------------------------------------------------------------------------- #
+
+
+def test_a_registered_user_can_create_a_timeline() -> None:
+    """The precondition every export route has.
+
+    `POST /timelines/{id}/render`, the omnichannel matrix and the download URL
+    are all keyed by a timeline id. Until `POST /projects/{id}/timelines`
+    existed, no route in `app/api/v1` constructed a `Timeline` -- they were all
+    built inside Celery tasks and AI pipelines, or cloned from one that already
+    existed.
+    """
+
+    creating = [
+        (method, route)
+        for method, route, node in _all_route_handlers()
+        if method == "POST" and _constructs_a_timeline(node)
+    ]
+
+    assert creating, "no POST route in backend/app/api/v1 constructs a Timeline"
+
+
+def test_the_timeline_route_is_authenticated_and_owner_scoped() -> None:
+    """A timeline is a render request waiting to happen.
+
+    A render spends the project owner's credits and occupies a worker, so a
+    route that took ownership from the request body rather than the token would
+    let anyone queue work inside someone else's account. Several routes in this
+    repository still do exactly that (see the auth route map), which is why
+    this is checked rather than assumed.
+    """
+
+    creators = [
+        (module, node)
+        for module in sorted(API_DIR.glob("*.py"))
+        for method, _, node in _route_handlers(module)
+        if method == "POST" and _constructs_a_timeline(node)
+    ]
+    assert creators, "no timeline creation route to check"
+
+    for module, node in creators:
+        module_source = module.read_text(encoding="utf-8")
+        handler = ast.get_source_segment(module_source, node) or ""
+        where = f"{module.relative_to(ROOT).as_posix()}::{getattr(node, 'name', '?')}"
+
+        assert "get_current_user" in handler, (
+            f"{where} creates a Timeline without depending on get_current_user"
+        )
+        assert "owner_id=payload" not in handler and "owner_id=request" not in handler, (
+            f"{where} takes ownership from the request body"
+        )
+        # Asserted against the module, and against either idiom, because two
+        # earlier versions of this check were wrong in the same way. Looking
+        # for `current_user.id` inside the handler failed on a route that does
+        # the right thing through a helper; then demanding
+        # `Project.owner_id == current_user.id` failed on `camera_ingest.py`,
+        # which fetches the project and compares (`!=` -> 403). Both are
+        # owner-scoped. The property is that the project's owner is checked
+        # against the verified caller somewhere in the module -- not which
+        # spelling was used.
+        assert re.search(r"owner_id\s*[!=]=\s*current_user\.id", module_source), (
+            f"{where} never compares the project's owner to the verified caller"
+        )
+
+
+def test_the_created_timeline_is_one_a_render_would_accept() -> None:
+    """A timeline is not the same thing as an exportable timeline.
+
+    `_render_duration` in `renders.py` sums the keep segments of
+    `settings_json["confirmed_timeline"]` and answers
+    `400 Confirmed timeline has no keep segments` when the total is zero. A
+    creation route that stored an empty document would satisfy every check
+    above and still leave export unreachable -- the gap moved one step later
+    rather than closed.
+    """
+
+    module = API_DIR / "project_timelines.py"
+    assert module.exists(), "the timeline creation route module is missing"
+    source = module.read_text(encoding="utf-8")
+
+    assert "confirmed_timeline" in source, (
+        "the creation route stores no confirmed_timeline, so a render would refuse it"
+    )
+    assert "build_initial_confirmed_timeline" in source, (
+        "the document is built inline rather than by the tested builder"
+    )
+
+
+def test_every_timeline_construction_site_is_accounted_for() -> None:
+    """A new `Timeline(...)` should be a decision, not a surprise.
+
+    The list is deliberately explicit: an unreviewed construction site is how a
+    second route starts creating timelines nobody scoped to an owner.
+    """
+
+    sites: list[str] = []
+    for path in sorted(BACKEND_APP.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "Timeline"
+            ):
+                sites.append(path.relative_to(ROOT).as_posix())
+
+    assert set(sites) == {
+        # The one a person can reach without an AI run or a Celery task.
+        "backend/app/api/v1/project_timelines.py",
+        # Live capture writes its own version as clips arrive.
+        "backend/app/api/v1/camera_ingest.py",
+        # AI pipelines and template runs, all queued rather than called.
+        "backend/app/autodirector/pipeline.py",
+        "backend/app/tasks/auto_narrative_tasks.py",
+        "backend/app/tasks/beat_sync_tasks.py",
+        "backend/app/tasks/long_to_shorts_tasks.py",
+        "backend/app/tasks/one_click_tasks.py",
+        # Cloning an existing version, not creating a first one.
+        "backend/app/services/agent_timeline_versions.py",
+    }, sorted(set(sites))
