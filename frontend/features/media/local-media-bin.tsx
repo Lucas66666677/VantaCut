@@ -10,7 +10,7 @@ const PART_SIZE = 16 * 1024 * 1024;
 
 type UploadState = { progress: number; status: "local" | "uploading" | "ready" | "error"; message?: string };
 
-async function uploadToProject(file: File, projectId: string, onProgress: (progress: number) => void) {
+async function uploadToProject(file: File, projectId: string, onProgress: (progress: number) => void): Promise<string> {
   const initiate = await authenticatedFetch(`${API_URL}/api/v1/media/multipart-upload/initiate`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -45,9 +45,15 @@ async function uploadToProject(file: File, projectId: string, onProgress: (progr
     const body = await complete.json() as { detail?: string };
     throw new Error(body.detail ?? "無法完成素材上傳");
   }
+  // Returned rather than discarded: the export panel needs this id, and it is
+  // the only place the client ever learns it -- no route lists a project's
+  // media assets.
+  const completed = await complete.json() as { id?: string };
+  if (!completed.id) throw new Error("上傳完成但未取得素材識別碼");
+  return completed.id;
 }
 
-export function LocalMediaBin({ projectId }: { projectId?: string }) {
+export function LocalMediaBin({ projectId, onAssetUploaded }: { projectId?: string; onAssetUploaded?: (assetId: string) => void }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [records, setRecords] = useState<LocalMediaRecord[]>([]);
   const [uploads, setUploads] = useState<Record<string, UploadState>>({});
@@ -63,7 +69,7 @@ export function LocalMediaBin({ projectId }: { projectId?: string }) {
       setRecords((current) => [record, ...current]);
       setUploads((current) => ({ ...current, [id]: { progress: 0, status: projectId ? "uploading" : "local" } }));
       if (projectId) void uploadToProject(file, projectId, (progress) => setUploads((current) => ({ ...current, [id]: { progress, status: "uploading" } })))
-        .then(() => setUploads((current) => ({ ...current, [id]: { progress: 1, status: "ready" } })))
+        .then((assetId) => { setUploads((current) => ({ ...current, [id]: { progress: 1, status: "ready" } })); onAssetUploaded?.(assetId); })
         .catch((error: unknown) => setUploads((current) => ({ ...current, [id]: { progress: current[id]?.progress ?? 0, status: "error", message: error instanceof Error ? error.message : "上傳失敗" } })));
     }
   };
