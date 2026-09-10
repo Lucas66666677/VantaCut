@@ -10,9 +10,14 @@ import {
 } from "@/lib/api/studio-export";
 import {
   clearExportSession,
+  clearRecentRender,
   readExportSession,
+  readRecentRender,
   writeExportSession,
+  writeRecentRender,
+  type RecentRenderRecord,
 } from "@/features/export/export-session-storage";
+import { RecentRenderRecovery } from "@/features/export/recent-render-recovery";
 import { useProjectStatus } from "@/features/project-status/use-project-status";
 import { useAuthStore } from "@/lib/auth/auth-store";
 
@@ -159,9 +164,12 @@ export function StudioExportPanel({ projectId, assetId, uploadStartedAt }: Studi
    * network round trip later.
    */
   const selection = useRef(0);
-  /** Set when a new upload supersedes an export that had already been paid
-   *  for, so the loss is stated rather than silent. */
-  const [supersededRender, setSupersededRender] = useState(false);
+  /**
+   * The most recent render a credit was spent on, whatever the panel is
+   * pointing at now. Kept apart from the selection so switching assets
+   * cannot take it away -- a warning about a lost export is not recovery.
+   */
+  const [recentRender, setRecentRender] = useState<RecentRenderRecord | undefined>(undefined);
 
   // Merges rather than replaces. Remounting the panel (applying a workspace
   // intent and coming back) re-runs the effects below with the same props; a
@@ -177,6 +185,7 @@ export function StudioExportPanel({ projectId, assetId, uploadStartedAt }: Studi
   useEffect(() => {
     if (!userId || !projectId) return;
     const record = readExportSession(userId, projectId);
+    setRecentRender(readRecentRender(userId, projectId));
     setRestored(true);
     if (!record) return;
     if (record.assetId && !record.timelineId && !record.renderJobId) {
@@ -226,8 +235,8 @@ export function StudioExportPanel({ projectId, assetId, uploadStartedAt }: Studi
     // tracking-to-phase effect deliberately refuses to touch the timeline,
     // queued and downloadable phases -- so uploading B after building A left
     // the export controls still pointing at A.
-    const previous = readExportSession(userId, projectId);
-    setSupersededRender(Boolean(previous?.renderJobId));
+    // Only the selection is cleared. The recent-render record deliberately
+    // survives: it is the one thing here that cost money.
     clearExportSession(userId, projectId);
     setPhase({ kind: "media-processing", progress: 0, message: "正在處理素材" });
     setTracking({
@@ -368,11 +377,6 @@ export function StudioExportPanel({ projectId, assetId, uploadStartedAt }: Studi
     setPhase({ kind: "requesting", timelineId });
     try {
       const outcome: RenderOutcome = await requestRender(timelineId, resolution);
-      // The credit is already spent either way -- the request reached the
-      // backend. What must not happen is this answer overwriting the panel
-      // for a newer asset, which would also persist the old job id over the
-      // new selection's record.
-      if (selection.current !== token) return;
       if (outcome.kind === "queued") {
         const receipt: RenderReceipt = {
           renderJobId: outcome.renderJobId,
@@ -380,10 +384,22 @@ export function StudioExportPanel({ projectId, assetId, uploadStartedAt }: Studi
           creditsRemaining: outcome.creditsRemaining,
           watermarked: outcome.watermarked,
         };
+        // Recorded before the token is consulted, and outside the selection
+        // record. A late answer for the previous asset still describes a
+        // credit that was spent, and dropping it here is exactly how the
+        // render became unreachable.
+        writeRecentRender(userId, projectId, receipt);
+        setRecentRender(receipt);
+        // Only now does the current selection matter. A late answer stops
+        // here: B's state is not replaced, and the receipt above is already
+        // safe.
+        if (selection.current !== token) return;
         // Persisted before the first poll, so even an immediate reload finds
         // the job the credit was spent on.
         remember({ assetId: tracking?.assetId, timelineId, ...receipt });
         setPhase({ kind: "queued", receipt });
+      } else if (selection.current !== token) {
+        return;
       } else if (outcome.kind === "hydrating") {
         setPhase({ kind: "hydrating", message: outcome.message, estimatedReadyAt: outcome.estimatedReadyAt, timelineId });
       } else if (outcome.kind === "blocked") {
@@ -429,11 +445,6 @@ export function StudioExportPanel({ projectId, assetId, uploadStartedAt }: Studi
         </label>
       </div>
 
-      {supersededRender && (
-        <p role="status" className="mt-3 text-xs text-[var(--lr-color-warning)]">
-          先前那次導出已被這個新素材取代，這個面板不再追蹤它；已扣除的點數不會退回。
-        </p>
-      )}
 
       <div className="mt-3 text-xs" data-testid="studio-export-state" data-restored={restored ? "1" : "0"}>
         {phase.kind === "waiting-for-media" && (
@@ -548,6 +559,20 @@ export function StudioExportPanel({ projectId, assetId, uploadStartedAt }: Studi
           </div>
         )}
       </div>
+
+      {recentRender &&
+        !(
+          (phase.kind === "queued" || phase.kind === "downloadable" || phase.kind === "poll-stalled") &&
+          phase.receipt.renderJobId === recentRender.renderJobId
+        ) && (
+          <RecentRenderRecovery
+            record={recentRender}
+            onDismiss={() => {
+              clearRecentRender(userId, projectId);
+              setRecentRender(undefined);
+            }}
+          />
+        )}
     </section>
   );
 }

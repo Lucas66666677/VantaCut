@@ -781,14 +781,22 @@ test("a timeline response for the previous asset does not recapture the panel", 
   expect(timelineRequests).toEqual([ASSET_ID, ASSET_ID_B]);
 });
 
-test("superseding a paid render says so rather than dropping it silently", async ({ page }) => {
-  // Switching assets erases the stored record, which is where a queued
-  // render's id lives. That is defensible -- one project, one slot -- but it
-  // must not be invisible: the credit is already spent.
+test("switching assets keeps the paid render reachable, not just announced", async ({ page }) => {
+  // Review: "a warning after losing access is not recovery". Switching
+  // replaces the selection, but the render a credit was spent on has to stay
+  // reachable -- and reach a download.
+  let renderCalls = 0;
+  let downloadPolls = 0;
   await installBackend(page, {
     status: MEDIA_READY,
     assetIds: [ASSET_ID, ASSET_ID_B],
-    render: (route) => json(route, 202, { render_job_id: RENDER_JOB_ID, task_id: "t", subscription_tier: "free", render_credits_remaining: 4, watermark_applied: true }),
+    render: (route) => { renderCalls += 1; return json(route, 202, { render_job_id: RENDER_JOB_ID, task_id: "t", subscription_tier: "free", render_credits_remaining: 4, watermark_applied: true }); },
+    download: (route) => {
+      downloadPolls += 1;
+      return downloadPolls <= 1
+        ? json(route, 404, { detail: "Completed render not found" })
+        : json(route, 200, { download_url: `${STORAGE_HOST}/render-a.mp4` });
+    },
   });
 
   await page.goto("/studio");
@@ -800,6 +808,99 @@ test("superseding a paid render says so rather than dropping it silently", async
 
   await addAVideo(page);
 
-  await expect(page.getByText(/先前那次導出已被這個新素材取代/)).toBeVisible();
-  await expect(page.getByText(/剩餘點數 4/)).toHaveCount(0);
+  // B owns the panel; A owns its own recovery block, which can be downloaded.
+  const recovery = page.getByRole("region", { name: "先前的導出" });
+  await expect(recovery).toBeVisible();
+  await expect(recovery.getByRole("link", { name: "下載先前的導出" })).toBeVisible({ timeout: 20_000 });
+  await expect(recovery.getByRole("link", { name: "下載先前的導出" })).toHaveAttribute("href", `${STORAGE_HOST}/render-a.mp4`);
+  expect(renderCalls).toBe(1);
+});
+
+test("a render pending on A survives switching to B, a late response and a reload", async ({ page }) => {
+  // The full ordering review asked for. A's render answer arrives *after* B
+  // is selected, so the receipt has to be persisted outside the selection or
+  // it is lost at the moment it is created -- and then it has to survive a
+  // reload and still reach a download, on one render call.
+  let renderCalls = 0;
+  let releaseRender = false;
+  let downloadPolls = 0;
+
+  await installBackend(page, {
+    status: MEDIA_READY,
+    assetIds: [ASSET_ID, ASSET_ID_B],
+    render: async (route) => {
+      renderCalls += 1;
+      for (let attempt = 0; attempt < 400 && !releaseRender; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      return json(route, 202, { render_job_id: RENDER_JOB_ID, task_id: "t", subscription_tier: "free", render_credits_remaining: 3, watermark_applied: true });
+    },
+    download: (route) => {
+      downloadPolls += 1;
+      return downloadPolls <= 1
+        ? json(route, 404, { detail: "Completed render not found" })
+        : json(route, 200, { download_url: `${STORAGE_HOST}/render-a.mp4` });
+    },
+  });
+
+  await page.goto("/studio");
+  await addAVideo(page);
+  await page.getByRole("button", { name: "建立時間軸" }).click();
+  await page.getByRole("button", { name: "導出影片" }).click();
+  await page.getByRole("button", { name: "確認並導出" }).click();
+  await expect(page.getByRole("status").filter({ hasText: "正在送出導出請求" })).toBeVisible();
+
+  // Switch to B while A's render request is still open.
+  await addAVideo(page);
+  await expect(page.getByRole("button", { name: "建立時間軸" })).toBeVisible();
+
+  // A's answer lands late, for an asset the panel no longer points at.
+  releaseRender = true;
+
+  // B's own state is untouched: still waiting to be built, not queued.
+  await expect(page.getByRole("region", { name: "先前的導出" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "建立時間軸" })).toBeVisible();
+  await expect(page.getByText("時間軸已就緒。")).toHaveCount(0);
+
+  await page.reload();
+
+  // After the reload the paid render is still reachable and downloadable.
+  const recovery = page.getByRole("region", { name: "先前的導出" });
+  await expect(recovery).toBeVisible();
+  await expect(recovery).toContainText("剩餘點數 3");
+  await expect(recovery.getByRole("link", { name: "下載先前的導出" })).toBeVisible({ timeout: 20_000 });
+
+  // One render, ever. Recovery polls; it never resubmits.
+  expect(renderCalls).toBe(1);
+});
+
+test("dismissing the recovery block stops tracking without spending anything", async ({ page }) => {
+  let renderCalls = 0;
+  await installBackend(page, {
+    status: MEDIA_READY,
+    assetIds: [ASSET_ID, ASSET_ID_B],
+    render: (route) => { renderCalls += 1; return json(route, 202, { render_job_id: RENDER_JOB_ID, task_id: "t", subscription_tier: "free", render_credits_remaining: 4, watermark_applied: true }); },
+    download: (route) => json(route, 404, { detail: "Completed render not found" }),
+  });
+
+  await page.goto("/studio");
+  await addAVideo(page);
+  await page.getByRole("button", { name: "建立時間軸" }).click();
+  await page.getByRole("button", { name: "導出影片" }).click();
+  await page.getByRole("button", { name: "確認並導出" }).click();
+  await expect(page.getByText(/剩餘點數 4/)).toBeVisible();
+  await addAVideo(page);
+
+  const recovery = page.getByRole("region", { name: "先前的導出" });
+  await expect(recovery).toBeVisible();
+  await recovery.getByRole("button", { name: "不再追蹤" }).click();
+  await expect(recovery).toHaveCount(0);
+
+  await page.reload();
+  // Wait for the panel to finish restoring before asserting an absence:
+  // `toHaveCount(0)` is satisfied by "not yet rendered", so without this the
+  // assertion passes even when the record was never cleared from storage.
+  await expect(page.locator('[data-testid="studio-export-state"][data-restored="1"]')).toBeVisible();
+  await expect(page.getByRole("region", { name: "先前的導出" })).toHaveCount(0);
+  expect(renderCalls).toBe(1);
 });
