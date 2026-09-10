@@ -43,15 +43,36 @@ router = APIRouter(prefix="/projects", tags=["timelines"])
 MAX_LISTED_TIMELINES = 100
 
 
-def _owned_project(project_id: UUID, current_user: User, db: Session) -> Project:
+def _owned_project(
+    project_id: UUID, current_user: User, db: Session, *, for_update: bool = False
+) -> Project:
     """The caller's project, or a 404 that says nothing about what exists.
 
     Filtered on `owner_id` in the query rather than fetched and compared, so
     someone else's project is invisible rather than forbidden.
+
+    `for_update` takes a row lock that serialises the write path. Review found
+    why it is needed: creating a timeline reads `MAX(version)`, demotes the
+    current rows, and inserts a new current one. Two requests could interleave
+    so that both read zero, both demote nothing, and both commit version 1 as
+    current. Neither invariant is backed by a constraint, so nothing would have
+    rejected the second row.
+
+    The lock is on the `projects` row rather than on `timelines`, because the
+    invariants are per project and the first writer has no timeline row to
+    lock. It is held for the transaction and released by the commit, so no
+    table and no migration are involved.
+
+    The listing does not take it. A reader blocking behind a writer buys
+    nothing here, and `SELECT ... FOR UPDATE` on the read path would turn a
+    harmless refresh into contention.
     """
-    project = db.scalar(
-        select(Project).where(Project.id == project_id, Project.owner_id == current_user.id)
+    statement = select(Project).where(
+        Project.id == project_id, Project.owner_id == current_user.id
     )
+    if for_update:
+        statement = statement.with_for_update()
+    project = db.scalar(statement)
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found")
     return project
@@ -74,7 +95,10 @@ def create_project_timeline(
     belonging to another project cannot be pulled into this one — the same
     check `subtitles.py` makes before it writes a `confirmed_timeline`.
     """
-    project = _owned_project(project_id, current_user, db)
+    # Locked before MAX(version) is read. The order is the guard: reading the
+    # version first and locking after leaves exactly the window the lock exists
+    # to close, because both requests would already hold the answer "zero".
+    project = _owned_project(project_id, current_user, db, for_update=True)
 
     asset = db.scalar(
         select(MediaAsset).where(

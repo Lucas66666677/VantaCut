@@ -49,6 +49,7 @@ on:
       - "backend/app/schemas/project_timeline.py"
       - "backend/app/services/timeline_bootstrap.py"
       - "backend/tests/test_project_timeline_provisioning.py"
+      - "backend/tests/test_project_timeline_concurrency.py"
       - "backend/tests/test_timeline_bootstrap.py"
       - "backend/app/worker.py"
       - "backend/app/models/entities.py"
@@ -505,3 +506,6 @@ jobs:
       - name: Run project timeline provisioning ownership tests
         working-directory: backend
         run: python -m pytest tests/test_project_timeline_provisioning.py -v
+      - name: Run project timeline concurrency regression (real PostgreSQL)
+        working-directory: backend
+        run: python -m pytest tests/test_project_timeline_concurrency.py -v
