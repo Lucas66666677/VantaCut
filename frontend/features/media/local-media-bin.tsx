@@ -53,7 +53,7 @@ async function uploadToProject(file: File, projectId: string, onProgress: (progr
   return completed.id;
 }
 
-export function LocalMediaBin({ projectId, onAssetUploaded }: { projectId?: string; onAssetUploaded?: (assetId: string) => void }) {
+export function LocalMediaBin({ projectId, onAssetUploaded, onUploadStarted }: { projectId?: string; onAssetUploaded?: (assetId: string) => void; onUploadStarted?: () => void }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [records, setRecords] = useState<LocalMediaRecord[]>([]);
   const [uploads, setUploads] = useState<Record<string, UploadState>>({});
@@ -68,6 +68,10 @@ export function LocalMediaBin({ projectId, onAssetUploaded }: { projectId?: stri
       await saveLocalMedia(record);
       setRecords((current) => [record, ...current]);
       setUploads((current) => ({ ...current, [id]: { progress: 0, status: projectId ? "uploading" : "local" } }));
+      // Announced before the first request: media_ready can be published
+      // before the complete response lands, and a listener that only hears
+      // about finished uploads cannot tell that event from a stale one.
+      if (projectId) onUploadStarted?.();
       if (projectId) void uploadToProject(file, projectId, (progress) => setUploads((current) => ({ ...current, [id]: { progress, status: "uploading" } })))
         .then((assetId) => { setUploads((current) => ({ ...current, [id]: { progress: 1, status: "ready" } })); onAssetUploaded?.(assetId); })
         .catch((error: unknown) => setUploads((current) => ({ ...current, [id]: { progress: current[id]?.progress ?? 0, status: "error", message: error instanceof Error ? error.message : "上傳失敗" } })));

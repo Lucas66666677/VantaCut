@@ -53,7 +53,10 @@ const TIMELINE = { id: TIMELINE_ID, project_id: PROJECT.id, name: "第一版剪�
 const STORAGE_HOST = "https://storage.example.invalid";
 
 function statusEvent(fields: Record<string, unknown>): string {
-  return `event: status\ndata: ${JSON.stringify({ project_id: PROJECT.id, progress: 0, stage: "idle", status: "processing", ...fields })}\n\n`;
+  // `updated_at` matters: the panel identifies a publish by it, so that the
+  // SSE client replaying the same body on reconnect is not mistaken for a
+  // fresh event about a newer asset.
+  return `event: status\ndata: ${JSON.stringify({ project_id: PROJECT.id, progress: 0, stage: "idle", status: "processing", updated_at: "2026-09-09T00:00:00Z", ...fields })}\n\n`;
 }
 
 function json(route: Route, status: number, body: unknown): Promise<void> {
@@ -63,6 +66,16 @@ function json(route: Route, status: number, body: unknown): Promise<void> {
 interface Backend {
   /** SSE body for the project status stream. */
   status: string;
+  /**
+   * When the stream delivers that body.
+   *
+   * Defaults to "after-upload", which is what the backend actually does:
+   * `process_new_media` is enqueued by the multipart-complete handler, so
+   * every `media_*` publish for an asset necessarily follows its upload.
+   * "immediate" models a status snapshot that predates this upload -- a
+   * restored session, or readiness left over from an earlier asset.
+   */
+  statusGate?: "immediate" | "after-upload";
   /** Answers `POST /projects/{id}/timelines`. Defaults to a created timeline. */
   timelines?: (route: Route) => Promise<void>;
   /** Answers `POST /timelines/{id}/render`. */
@@ -94,12 +107,17 @@ async function installBackend(page: Page, backend: Backend): Promise<void> {
       ? route.fulfill({ status: 204, headers: cors, body: "" })
       : route.fulfill({ status: 200, headers: { ...cors, etag: '"etag-1"' }, body: "" }));
 
+  let uploadBegan = backend.statusGate === "immediate";
+
   await page.route("**/api/v1/**", async (route: Route) => {
     const { pathname } = new URL(route.request().url());
 
     if (pathname === "/api/v1/auth/me") return json(route, 200, TEST_USER);
     if (pathname === "/api/v1/projects") return json(route, 200, [PROJECT]);
     if (pathname.endsWith("/status")) {
+      for (let attempt = 0; attempt < 200 && !uploadBegan; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
       return route.fulfill({
         status: 200,
         headers: { "content-type": "text/event-stream", "cache-control": "no-cache" },
@@ -111,6 +129,7 @@ async function installBackend(page: Page, backend: Backend): Promise<void> {
       return json(route, 201, TIMELINE);
     }
     if (pathname === "/api/v1/media/multipart-upload/initiate") {
+      uploadBegan = true;
       return json(route, 201, { asset_id: ASSET_ID, storage_key: "k", upload_id: "u", part_size_bytes: 16 * 1024 * 1024, expires_in: 900 });
     }
     if (pathname === "/api/v1/media/multipart-upload/part-url") {
@@ -416,6 +435,9 @@ test("another account on the same browser does not inherit the job", async ({ pa
   // should never have been offered.
   let currentUser = TEST_USER;
   let renderCalls = 0;
+  // Same ordering the backend enforces: readiness is published only after the
+  // upload that produced the asset. See installBackend's statusGate.
+  let uploadBegan = false;
 
   await page.addInitScript(
     ([key, token]) => window.sessionStorage.setItem(key, token),
@@ -426,10 +448,13 @@ test("another account on the same browser does not inherit the job", async ({ pa
     if (pathname === "/api/v1/auth/me") return json(route, 200, currentUser);
     if (pathname === "/api/v1/projects") return json(route, 200, [PROJECT]);
     if (pathname.endsWith("/status")) {
+      for (let attempt = 0; attempt < 200 && !uploadBegan; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
       return route.fulfill({ status: 200, headers: { "content-type": "text/event-stream" }, body: MEDIA_READY });
     }
     if (pathname.endsWith("/timelines")) return json(route, 201, TIMELINE);
-    if (pathname === "/api/v1/media/multipart-upload/initiate") return json(route, 201, { asset_id: ASSET_ID, storage_key: "k", upload_id: "u", part_size_bytes: 16 * 1024 * 1024, expires_in: 900 });
+    if (pathname === "/api/v1/media/multipart-upload/initiate") { uploadBegan = true; return json(route, 201, { asset_id: ASSET_ID, storage_key: "k", upload_id: "u", part_size_bytes: 16 * 1024 * 1024, expires_in: 900 }); }
     if (pathname === "/api/v1/media/multipart-upload/part-url") return json(route, 200, { upload_url: `${STORAGE_HOST}/part-1` });
     if (pathname === "/api/v1/media/multipart-upload/complete") return json(route, 200, { id: ASSET_ID, status: "processing" });
     if (pathname.endsWith("/download-url")) return json(route, 404, { detail: "Completed render not found" });
@@ -458,5 +483,192 @@ test("another account on the same browser does not inherit the job", async ({ pa
 
   await expect(page.getByText("先加入一段影片，導出選項就會出現。")).toBeVisible();
   await expect(page.getByText(/剩餘點數 4/)).toHaveCount(0);
+  expect(renderCalls).toBe(1);
+});
+
+
+test("media_ready arriving before the upload completes still unlocks the timeline", async ({ page }) => {
+  // The race review found. The readiness effect used to depend only on the
+  // status object while reading the asset id from a ref: readiness published
+  // before the complete response left the ref empty, the effect returned, and
+  // an unchanged status never re-ran it. The panel sat on "正在處理素材"
+  // forever with the asset perfectly ready.
+  let uploadBegan = false;
+  let readinessDelivered = false;
+  // Held by the test, so the window where readiness is known and the asset id
+  // is not can be observed rather than raced through.
+  let releaseComplete = false;
+
+  await page.addInitScript(
+    ([key, token]) => window.sessionStorage.setItem(key, token),
+    [TOKEN_STORAGE_KEY, TEST_TOKEN] as const,
+  );
+  const cors = { "access-control-allow-origin": "*", "access-control-allow-methods": "PUT, GET, OPTIONS", "access-control-allow-headers": "*", "access-control-expose-headers": "etag" };
+  await page.route(`${STORAGE_HOST}/**`, (route: Route) =>
+    route.request().method() === "OPTIONS"
+      ? route.fulfill({ status: 204, headers: cors, body: "" })
+      : route.fulfill({ status: 200, headers: { ...cors, etag: '"etag-1"' }, body: "" }));
+
+  const settle = async (predicate: () => boolean) => {
+    for (let attempt = 0; attempt < 200 && !predicate(); attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+  };
+
+  await page.route("**/api/v1/**", async (route: Route) => {
+    const { pathname } = new URL(route.request().url());
+    if (pathname === "/api/v1/auth/me") return json(route, 200, TEST_USER);
+    if (pathname === "/api/v1/projects") return json(route, 200, [PROJECT]);
+    if (pathname.endsWith("/status")) {
+      // Readiness is withheld until the upload has actually begun, then sent.
+      await settle(() => uploadBegan);
+      readinessDelivered = true;
+      return route.fulfill({ status: 200, headers: { "content-type": "text/event-stream" }, body: MEDIA_READY });
+    }
+    if (pathname === "/api/v1/media/multipart-upload/initiate") {
+      uploadBegan = true;
+      return json(route, 201, { asset_id: ASSET_ID, storage_key: "k", upload_id: "u", part_size_bytes: 16 * 1024 * 1024, expires_in: 900 });
+    }
+    if (pathname === "/api/v1/media/multipart-upload/part-url") return json(route, 200, { upload_url: `${STORAGE_HOST}/part-1` });
+    if (pathname === "/api/v1/media/multipart-upload/complete") {
+      // Held until readiness is on the wire and the test says go: this
+      // ordering is the whole point.
+      await settle(() => readinessDelivered && releaseComplete);
+      return json(route, 200, { id: ASSET_ID, status: "processing" });
+    }
+    if (pathname.endsWith("/timelines")) return json(route, 201, TIMELINE);
+    return json(route, 200, {});
+  });
+
+  await page.goto("/studio");
+  await addAVideo(page);
+
+  // Readiness is known, the asset id is not. Offering the button here would
+  // send `source_asset_id: undefined` to the backend, so it must stay hidden.
+  await expect.poll(() => readinessDelivered).toBe(true);
+  await page.waitForTimeout(500);
+  await expect(page.getByRole("button", { name: "建立時間軸" })).toHaveCount(0);
+
+  releaseComplete = true;
+
+  // The assertion that used to fail: readiness landed first, and the panel
+  // has to reconcile it once the asset id appears.
+  await expect(page.getByRole("button", { name: "建立時間軸" })).toBeVisible();
+  await page.getByRole("button", { name: "建立時間軸" }).click();
+  await expect(page.getByText("時間軸已就緒。")).toBeVisible();
+});
+
+test("a restored asset reconciles a status snapshot that arrived first", async ({ page }) => {
+  // Same shape, reached by reload rather than upload: the record is restored
+  // in an effect, and the status snapshot can already be on screen by then.
+  await page.addInitScript(
+    ([tokenKey, token, recordKey, record]) => {
+      window.sessionStorage.setItem(tokenKey, token);
+      window.sessionStorage.setItem(recordKey, record);
+    },
+    [
+      TOKEN_STORAGE_KEY,
+      TEST_TOKEN,
+      `vantacut_studio_export:${TEST_USER.id}:${PROJECT.id}`,
+      JSON.stringify({ assetId: ASSET_ID }),
+    ] as const,
+  );
+  await installBackend(page, { status: MEDIA_READY, statusGate: "immediate" });
+
+  await page.goto("/studio");
+
+  // No upload in this session at all: the asset came from the stored record.
+  await expect(page.getByRole("button", { name: "建立時間軸" })).toBeVisible();
+  await page.getByRole("button", { name: "建立時間軸" }).click();
+  await expect(page.getByText("時間軸已就緒。")).toBeVisible();
+});
+
+test("readiness left over from an earlier asset does not unlock a new upload", async ({ page }) => {
+  // The other half of the fix. Reconciling against the tracked asset must not
+  // become "any media_ready will do": the status stream carries no asset id,
+  // and the SSE client replays the last event on every reconnect, so a stale
+  // readiness would otherwise mark a freshly uploaded file ready the instant
+  // it was chosen -- and the backend would then refuse the timeline with 409.
+  await installBackend(page, { status: MEDIA_READY, statusGate: "immediate" });
+
+  await page.goto("/studio");
+  // The stale event is on screen before anything is uploaded.
+  await expect(page.getByText("先加入一段影片，導出選項就會出現。")).toBeVisible();
+
+  await addAVideo(page);
+
+  await expect(page.getByRole("status").filter({ hasText: "素材處理完成前無法導出" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "建立時間軸" })).toHaveCount(0);
+  // Still refused after the SSE has had time to reconnect and replay it.
+  await page.waitForTimeout(2_500);
+  await expect(page.getByRole("button", { name: "建立時間軸" })).toHaveCount(0);
+});
+
+
+test("remounting the panel with a cached status still reconciles the restored asset", async ({ page }) => {
+  // The case the `tracking` dependency exists for, and a real user path: the
+  // workspace drops the welcome panel when an intent is applied and restores
+  // it with "精簡介面". On that remount the status store is already
+  // populated, so `status` is non-undefined on the panel's very first render
+  // and no further event follows. A readiness effect keyed only on `status`
+  // runs once, before the restore has set anything to track, and never runs
+  // again -- leaving a ready asset stuck on "正在處理素材".
+  await installBackend(page, { status: MEDIA_READY });
+
+  await page.goto("/studio");
+  await addAVideo(page);
+  await expect(page.getByRole("button", { name: "建立時間軸" })).toBeVisible();
+
+  // Leave the welcome workspace: the export panel unmounts with it.
+  await page.getByLabel("描述剪輯需求").fill("精細調色");
+  await page.getByRole("button", { name: "套用工作區" }).click();
+  await expect(page.getByRole("heading", { name: "導出影片" })).toHaveCount(0);
+
+  // Come back. The panel remounts against a store that already holds the
+  // readiness event, and must restore the asset and reconcile it.
+  await page.getByRole("button", { name: "精簡介面" }).click();
+  await expect(page.getByRole("heading", { name: "導出影片" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "建立時間軸" })).toBeVisible();
+});
+
+
+test("leaving the welcome workspace and reloading still resumes the paid render", async ({ page }) => {
+  // The stored record is written by several effects, and a remount re-runs
+  // the one that only knows the asset id. If that write replaced the record
+  // instead of merging into it, the renderJobId would be dropped -- and the
+  // reload that recovery exists for would find nothing to resume, for a
+  // render the user had already been charged for.
+  let renderCalls = 0;
+  let downloadPolls = 0;
+  await installBackend(page, {
+    status: MEDIA_READY,
+    render: (route) => { renderCalls += 1; return json(route, 202, { render_job_id: RENDER_JOB_ID, task_id: "t", subscription_tier: "free", render_credits_remaining: 4, watermark_applied: true }); },
+    download: (route) => {
+      downloadPolls += 1;
+      return downloadPolls <= 3
+        ? json(route, 404, { detail: "Completed render not found" })
+        : json(route, 200, { download_url: `${STORAGE_HOST}/render.mp4` });
+    },
+  });
+
+  await page.goto("/studio");
+  await addAVideo(page);
+  await page.getByRole("button", { name: "建立時間軸" }).click();
+  await page.getByRole("button", { name: "導出影片" }).click();
+  await page.getByRole("button", { name: "確認並導出" }).click();
+  await expect(page.getByText(/方案 免費／剩餘點數 4/)).toBeVisible();
+
+  // Away and back: the panel unmounts and remounts inside the same session.
+  await page.getByLabel("描述剪輯需求").fill("精細調色");
+  await page.getByRole("button", { name: "套用工作區" }).click();
+  await expect(page.getByRole("heading", { name: "導出影片" })).toHaveCount(0);
+  await page.getByRole("button", { name: "精簡介面" }).click();
+  await expect(page.getByRole("heading", { name: "導出影片" })).toBeVisible();
+
+  // Now reload, which is what actually reads the stored record back.
+  await page.reload();
+
+  await expect(page.getByText(/方案 免費／剩餘點數 4/)).toBeVisible();
+  await expect(page.getByRole("link", { name: "下載影片" })).toBeVisible({ timeout: 20_000 });
   expect(renderCalls).toBe(1);
 });

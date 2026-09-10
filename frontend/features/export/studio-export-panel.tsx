@@ -87,22 +87,76 @@ interface StudioExportPanelProps {
   projectId?: string;
   /** The asset `LocalMediaBin` last finished uploading, if any. */
   assetId?: string;
+  /**
+   * When the current upload started, as a changing number.
+   *
+   * The panel needs this, and not just `assetId`, to tell two situations
+   * apart that look identical once the upload has finished: a `media_ready`
+   * published while this asset was being processed, and a `media_ready` left
+   * over from a previous asset. The status stream carries no asset id (see
+   * `app/core/progress.py`), so "arrived after this upload began" is the only
+   * signal available -- and it is only available if the panel is told when
+   * the upload began.
+   */
+  uploadStartedAt?: number;
 }
 
-export function StudioExportPanel({ projectId, assetId }: StudioExportPanelProps) {
+/**
+ * What is being waited on, and what has been seen for it.
+ *
+ * `assetId` is undefined between the upload starting and the complete
+ * response landing. Readiness can arrive inside that window, which is the
+ * race this structure exists to survive: `readySeen` records it, and the
+ * transition happens once the id is known.
+ */
+interface MediaTracking {
+  assetId?: string;
+  /**
+   * Identity of the status event already on screen when tracking began.
+   * Anything matching it belongs to whatever came before, so it is not
+   * readiness for this asset. Undefined means "accept anything", which is
+   * correct for a restored session: its asset is the one the events describe.
+   */
+  sinceKey?: string;
+  readySeen: boolean;
+  failure?: string;
+  progress: number;
+  message: string;
+}
+
+/** A publish is uniquely identified by its own timestamp; re-deliveries of
+ *  the same event (the SSE client reconnects and replays) repeat it. */
+function statusIdentity(event: { stage: string; progress: number; status: string; updated_at?: string; job_id?: string | null } | undefined): string | undefined {
+  if (!event) return undefined;
+  return [event.stage, event.progress, event.status, event.updated_at ?? "", event.job_id ?? ""].join("|");
+}
+
+export function StudioExportPanel({ projectId, assetId, uploadStartedAt }: StudioExportPanelProps) {
   const userId = useAuthStore((state) => state.user?.id);
   const status = useProjectStatus(projectId);
   const [phase, setPhase] = useState<Phase>({ kind: "waiting-for-media" });
   const [resolution, setResolution] = useState<"720p" | "1080p">("720p");
   const [confirming, setConfirming] = useState(false);
   const [restored, setRestored] = useState(false);
-  /** Which asset the panel is currently following, from either a fresh upload
-   *  or a restored record, so a second upload resets rather than silently
+  /** What the panel is currently waiting on, from a fresh upload or a
+   *  restored record, so a second upload resets rather than silently
    *  exporting the first one. */
-  const trackedAsset = useRef<string | undefined>(undefined);
+  const [tracking, setTracking] = useState<MediaTracking | undefined>(undefined);
+  /** Latest status without making every consumer re-run on it; read only at
+   *  the instant an upload begins, to snapshot what came before. */
+  const latestStatus = useRef(status);
+  latestStatus.current = status;
+  /** The upload-start value already acted on. Initialised to the mount-time
+   *  prop so a remount does not replay an upload that began long ago. */
+  const handledUploadStart = useRef<number | undefined>(uploadStartedAt);
 
+  // Merges rather than replaces. Remounting the panel (applying a workspace
+  // intent and coming back) re-runs the effects below with the same props; a
+  // replacing write would then reduce a stored record holding a live
+  // renderJobId to one holding only an assetId, losing a paid render.
   const remember = useCallback(
-    (record: Parameters<typeof writeExportSession>[2]) => writeExportSession(userId, projectId, record),
+    (patch: Parameters<typeof writeExportSession>[2]) =>
+      writeExportSession(userId, projectId, { ...(readExportSession(userId, projectId) ?? {}), ...patch }),
     [userId, projectId],
   );
 
@@ -112,7 +166,13 @@ export function StudioExportPanel({ projectId, assetId }: StudioExportPanelProps
     const record = readExportSession(userId, projectId);
     setRestored(true);
     if (!record) return;
-    trackedAsset.current = record.assetId;
+    if (record.assetId && !record.timelineId && !record.renderJobId) {
+      // A restored asset with nothing built on it yet. `sinceKey` is left
+      // undefined on purpose: the events this project is publishing are about
+      // this asset, including one that may already have arrived before this
+      // effect ran, so there is nothing to exclude.
+      setTracking({ assetId: record.assetId, readySeen: false, progress: 0, message: "正在處理素材" });
+    }
     if (record.renderJobId && record.tier && typeof record.creditsRemaining === "number") {
       // Straight back into polling the job that is already running. No render
       // is submitted, so no second credit is spent.
@@ -132,32 +192,83 @@ export function StudioExportPanel({ projectId, assetId }: StudioExportPanelProps
     }
   }, [userId, projectId]);
 
-  // A newly uploaded asset supersedes whatever was being followed.
+  // An upload beginning supersedes whatever was being followed, and is the
+  // moment the "everything before this belongs to something else" line is
+  // drawn. Waiting for `assetId` to draw it would be too late: readiness can
+  // be published before the complete response lands.
   useEffect(() => {
-    if (!assetId || trackedAsset.current === assetId) return;
-    trackedAsset.current = assetId;
+    // Only a *new* upload counts. The ref starts at the mount-time value, so
+    // remounting with the same timestamp is not mistaken for another upload
+    // -- which would re-snapshot the readiness already on screen as "before
+    // this asset" and strand a ready asset on "正在處理素材".
+    if (!uploadStartedAt || handledUploadStart.current === uploadStartedAt) return;
+    handledUploadStart.current = uploadStartedAt;
     setConfirming(false);
-    setPhase({ kind: "media-processing", progress: 0, message: "正在處理素材" });
+    // A new upload supersedes anything built on the previous one.
+    clearExportSession(userId, projectId);
+    setTracking({
+      sinceKey: statusIdentity(latestStatus.current),
+      readySeen: false,
+      progress: 0,
+      message: "正在處理素材",
+    });
+  }, [uploadStartedAt, userId, projectId]);
+
+  // The id arrives separately, and possibly after readiness already has.
+  useEffect(() => {
+    if (!assetId) return;
+    setTracking((current) => (current && current.assetId !== assetId ? { ...current, assetId } : current));
     remember({ assetId });
   }, [assetId, remember]);
 
-  // The worker's own progress, not a guess. Only advances the phase while the
-  // panel is still waiting on media; once a timeline exists these stages are
-  // stale and must not overwrite render state.
+  // Status -> tracking. Depends on `tracking` as well as `status`, which is
+  // the whole fix: when the asset id lands, this re-runs and can act on a
+  // readiness that was already delivered. Every update returns the identical
+  // object when nothing changed, so re-running cannot loop.
   useEffect(() => {
-    if (!trackedAsset.current || !status) return;
+    if (!tracking || !status) return;
+    const key = statusIdentity(status);
+    // No key, or the same event that was already on screen when this upload
+    // began: it describes something earlier, not this asset.
+    if (!key || key === tracking.sinceKey) return;
+    if (status.stage === "media_failed" || status.status === "failed") {
+      const failure = status.message || "素材處理失敗";
+      setTracking((current) => (current && current.failure !== failure ? { ...current, failure } : current));
+      return;
+    }
+    if (status.stage === "media_ready") {
+      setTracking((current) => (current && !current.readySeen ? { ...current, readySeen: true, progress: 100 } : current));
+      return;
+    }
+    if (status.stage.startsWith("media_")) {
+      const message = status.message || "正在處理素材";
+      setTracking((current) =>
+        current && (current.progress !== status.progress || current.message !== message)
+          ? { ...current, progress: status.progress, message }
+          : current,
+      );
+    }
+  }, [status, tracking]);
+
+  // Tracking -> phase. Only governs the pre-timeline phases; once a timeline
+  // or a render exists, media stages are stale and must not overwrite it.
+  useEffect(() => {
+    if (!tracking) return;
     setPhase((current) => {
-      if (current.kind !== "media-processing" && current.kind !== "media-failed") return current;
-      if (status.stage === "media_failed" || status.status === "failed") {
-        return { kind: "media-failed", message: status.message || "素材處理失敗" };
+      if (
+        current.kind !== "waiting-for-media" &&
+        current.kind !== "media-processing" &&
+        current.kind !== "media-failed" &&
+        current.kind !== "ready"
+      ) {
+        return current;
       }
-      if (status.stage === "media_ready") return { kind: "ready" };
-      if (status.stage.startsWith("media_")) {
-        return { kind: "media-processing", progress: status.progress, message: status.message || "正在處理素材" };
-      }
-      return current;
+      if (tracking.failure) return { kind: "media-failed", message: tracking.failure };
+      // Readiness needs the id too: the create call is made with it.
+      if (tracking.readySeen && tracking.assetId) return { kind: "ready" };
+      return { kind: "media-processing", progress: tracking.progress, message: tracking.message };
     });
-  }, [status]);
+  }, [tracking]);
 
   // Poll the only completion signal the backend exposes: download-url answers
   // 404 until the job is COMPLETED.
@@ -235,7 +346,7 @@ export function StudioExportPanel({ projectId, assetId }: StudioExportPanelProps
         };
         // Persisted before the first poll, so even an immediate reload finds
         // the job the credit was spent on.
-        remember({ assetId: trackedAsset.current, timelineId, ...receipt });
+        remember({ assetId: tracking?.assetId, timelineId, ...receipt });
         setPhase({ kind: "queued", receipt });
       } else if (outcome.kind === "hydrating") {
         setPhase({ kind: "hydrating", message: outcome.message, estimatedReadyAt: outcome.estimatedReadyAt, timelineId });
@@ -254,7 +365,7 @@ export function StudioExportPanel({ projectId, assetId }: StudioExportPanelProps
 
   const startOver = () => {
     clearExportSession(userId, projectId);
-    trackedAsset.current = undefined;
+    setTracking(undefined);
     setConfirming(false);
     setPhase({ kind: "waiting-for-media" });
   };
@@ -298,7 +409,7 @@ export function StudioExportPanel({ projectId, assetId }: StudioExportPanelProps
         {phase.kind === "ready" && (
           <div className="space-y-2">
             <p className="text-[var(--lr-color-text-muted)]">素材已處理完成，可以建立時間軸。</p>
-            <button type="button" onClick={() => void createTimeline(trackedAsset.current as string)} className="rounded-[var(--lr-radius-sm)] bg-[var(--lr-color-primary)] px-3 py-2 text-xs font-semibold text-[var(--lr-color-text-inverse)]">
+            <button type="button" onClick={() => void createTimeline(tracking?.assetId as string)} className="rounded-[var(--lr-radius-sm)] bg-[var(--lr-color-primary)] px-3 py-2 text-xs font-semibold text-[var(--lr-color-text-inverse)]">
               建立時間軸
             </button>
           </div>
