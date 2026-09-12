@@ -181,6 +181,64 @@ async function addAVideo(page: Page): Promise<void> {
 
 const MEDIA_READY = statusEvent({ stage: "media_ready", progress: 100, status: "completed", message: "媒體預處理完成" });
 
+test("a transient timeline failure retries the same upload without spending a credit", async ({ page }) => {
+  const timelineRequests: string[] = [];
+  let renders = 0;
+  await installBackend(page, {
+    status: MEDIA_READY,
+    timelineRequests,
+    timelines: (route) => timelineRequests.length === 1
+      ? json(route, 503, { detail: "Temporary timeline failure" })
+      : json(route, 201, TIMELINE),
+    render: (route) => { renders += 1; return json(route, 500, {}); },
+  });
+  await page.goto("/studio");
+  await addAVideo(page);
+  await page.getByRole("button", { name: "建立時間軸", exact: true }).click();
+  await expect(page.getByRole("alert").filter({ hasText: "Temporary timeline failure" })).toBeVisible();
+  await page.getByRole("button", { name: "重試建立時間軸", exact: true }).click();
+  await expect(page.getByText("時間軸已就緒。")).toBeVisible();
+  expect(timelineRequests).toEqual([ASSET_ID, ASSET_ID]);
+  expect(renders).toBe(0);
+});
+
+test("recovery replaces the download when a different render receipt arrives", async ({ page }) => {
+  const secondJob = "88888888-8888-8888-8888-888888888888";
+  let renderCalls = 0;
+  let releaseSecond = false;
+  await installBackend(page, {
+    status: MEDIA_READY,
+    assetIds: [ASSET_ID, ASSET_ID_B, ASSET_ID],
+    render: async (route) => {
+      renderCalls += 1;
+      const job = renderCalls === 1 ? RENDER_JOB_ID : secondJob;
+      if (job === secondJob) {
+        for (let i = 0; i < 400 && !releaseSecond; i += 1) await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      return json(route, 202, { render_job_id: job, subscription_tier: "free", render_credits_remaining: 3, watermark_applied: true });
+    },
+    download: (route) => json(route, 200, { download_url: `${STORAGE_HOST}/${route.request().url().includes(secondJob) ? "b" : "a"}.mp4` }),
+  });
+  await page.goto("/studio");
+  await addAVideo(page);
+  await page.getByRole("button", { name: "建立時間軸", exact: true }).click();
+  await page.getByRole("button", { name: "導出影片", exact: true }).click();
+  await page.getByRole("button", { name: "確認並導出" }).click();
+  await expect(page.getByRole("link", { name: "下載影片", exact: true })).toBeVisible();
+  await addAVideo(page);
+  const recovered = page.getByRole("link", { name: "下載先前的導出" });
+  await expect(recovered).toHaveAttribute("href", `${STORAGE_HOST}/a.mp4`);
+  await page.getByRole("button", { name: "建立時間軸", exact: true }).click();
+  await page.getByRole("button", { name: "導出影片", exact: true }).click();
+  await page.getByRole("button", { name: "確認並導出" }).click();
+  await expect(page.getByRole("status").filter({ hasText: "正在送出導出請求" })).toBeVisible();
+  await addAVideo(page);
+  await expect(page.getByRole("button", { name: "建立時間軸", exact: true })).toBeVisible();
+  releaseSecond = true;
+  await expect(recovered).toHaveAttribute("href", `${STORAGE_HOST}/b.mp4`);
+  expect(renderCalls).toBe(2);
+});
+
 test("the panel refuses to offer an export while the asset is still processing", async ({ page }) => {
   await installBackend(page, { status: statusEvent({ stage: "media_probing", progress: 20, message: "正在讀取影片格式" }) });
 

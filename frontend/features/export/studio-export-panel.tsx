@@ -548,6 +548,11 @@ export function StudioExportPanel({ projectId, assetId, uploadStartedAt }: Studi
         {phase.kind === "error" && (
           <div className="space-y-2">
             <p role="alert" className="text-[var(--lr-color-error)]">導出失敗：{phase.message}</p>
+            {!phase.timelineId && tracking?.assetId && (
+              <button type="button" onClick={() => void createTimeline(tracking.assetId as string)} className="rounded-[var(--lr-radius-sm)] border border-[var(--lr-color-border-strong)] px-3 py-2 text-xs font-semibold">
+                重試建立時間軸
+              </button>
+            )}
             {phase.timelineId && (
               <button type="button" onClick={() => { setPhase({ kind: "timeline", timelineId: phase.timelineId as string }); setConfirming(true); }} className="rounded-[var(--lr-radius-sm)] border border-[var(--lr-color-border-strong)] px-3 py-2 text-xs font-semibold">
                 再試一次導出
@@ -566,6 +571,7 @@ export function StudioExportPanel({ projectId, assetId, uploadStartedAt }: Studi
           phase.receipt.renderJobId === recentRender.renderJobId
         ) && (
           <RecentRenderRecovery
+            key={`${userId}:${projectId}:${recentRender.renderJobId}`}
             record={recentRender}
             onDismiss={() => {
               clearRecentRender(userId, projectId);
