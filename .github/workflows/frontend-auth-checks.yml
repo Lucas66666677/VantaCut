@@ -93,7 +93,7 @@ jobs:
       - name: Run frontend auth foundation tests
         env:
           PLAYWRIGHT_BASE_URL: http://127.0.0.1:3000
-        run: npx playwright test e2e/auth-foundation.spec.ts e2e/project-status-transport.spec.ts e2e/studio-project-provisioning.spec.ts
+        run: npx playwright test e2e/auth-foundation.spec.ts e2e/project-status-transport.spec.ts e2e/studio-project-provisioning.spec.ts e2e/studio-export-path.spec.ts
       - name: Stop the dev server
         if: always()
         run: kill "$(cat /tmp/next-dev.pid)" 2>/dev/null || true
